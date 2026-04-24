@@ -1,0 +1,9 @@
+{
+  "disabledSkills": [
+    "frontend-design",
+    "frontend-code-review",
+    "fix",
+    "pr-creator",
+    "code-reviewer"
+  ]
+}
