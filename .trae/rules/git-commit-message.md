@@ -1,8 +1,8 @@
 ---
-alwaysApply: true
+alwaysApply: false
+description: 生成Git提交信息时生效
 scene: git_message
 ---
-
 # Git 提交信息规范
 
 请遵循 Conventional Commits 规范生成提交信息。格式如下：
