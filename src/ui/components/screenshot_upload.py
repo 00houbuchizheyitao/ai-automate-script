@@ -24,7 +24,7 @@ class ScreenshotUpload(ft.Container):
 
         super().__init__(content=self.upload_area)
 
-    def _on_click(self, e):
+    def _on_click(self, e: ft.ControlEvent):
         self.file_picker.pick_files(
             allowed_extensions=["png", "jpg", "jpeg", "bmp"],
             dialog_title="选择截图",

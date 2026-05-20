@@ -25,6 +25,13 @@ class AutomateApp:
         self.page.window.min_height = 500
         self.page.window.center()
         self.page.padding = 0
+        
+        # 监听窗口关闭事件，在页面断开连接时优雅退出
+        self.page.on_disconnect = self._on_disconnect
+
+    def _on_disconnect(self, e):
+        # 这里可以清理资源，例如关闭某些后台服务
+        print("Flet session disconnected. Cleaning up...")
 
     def _build_ui(self):
         self.chat_view = ChatView(self.page, self.agent)

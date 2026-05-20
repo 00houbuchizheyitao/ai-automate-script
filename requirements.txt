@@ -1,3 +1,4 @@
+MaaFw>=5.0.0
 flet>=0.25.0
 ollama>=0.4.0
 easyocr>=1.7.0
