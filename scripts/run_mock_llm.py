@@ -26,7 +26,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.config.settings import AppSettings
 from src.framework import AgentRunner, MockEnv, Task, make_llm_decider
-from src.framework.perception import Perception
 from src.framework.types import ActionParseError, Status
 from src.llm.ollama_client import OllamaClient
 
@@ -50,7 +49,6 @@ async def run_once(decider, run_index: int, steps_limit: int) -> RunRecord:
     runner = AgentRunner(
         env=env,
         decider=decider,
-        perception=Perception(use_ocr=False),  # 合成画面无文字，OCR 无用武之地
         step_interval_s=0.2,
         parse_retries=3,
     )

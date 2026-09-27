@@ -14,7 +14,6 @@ from typing import Awaitable, Callable
 from src.framework.context import ContextAssembler
 from src.framework.env.base import Environment
 from src.framework.history import HistoryManager
-from src.framework.perception import Perception
 from src.framework.types import Action, ActionParseError, Status, Task, parse_action
 
 Decider = Callable[[str, bytes], Awaitable[str]]
@@ -28,18 +27,19 @@ class RunResult:
 
 
 class AgentRunner:
+    """注意：感知（Perception）由 Environment.capture() 内部负责组装，
+    Runner 只消费成品 FrameAnalysis——感知的调用权在适配者手里。"""
+
     def __init__(
         self,
         env: Environment,
         decider: Decider,
-        perception: Perception | None = None,
         history_window: int = 5,
         parse_retries: int = 2,
         step_interval_s: float = 0.2,
     ):
         self.env = env
         self.decider = decider
-        self.perception = perception or Perception(use_ocr=False)
         self.assembler = ContextAssembler()
         self.history = HistoryManager(window=history_window)
         self.parse_retries = parse_retries
