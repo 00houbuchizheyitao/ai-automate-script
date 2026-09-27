@@ -73,6 +73,8 @@ class Environment(ABC):
 
 **关键决策 3——最小核心 + 可选增强**：`save/restore` 等增强方法进可选层（benchmark 复位刚需，但不是每个游戏都支持存档）。判断标准只有一条：**没有它，Agent 循环转不转？** 转得起来就不进核心。
 
+**关键决策 4——契约与通用实现分层**：对桌面窗口游戏，`capture`（截屏+OCR 感知）与 `act`（键鼠注入）跨游戏完全通用，差异只在构造参数（截哪块区域、是否 OCR、执行节奏）。因此框架内置 `WindowEnv` 通用实现类（含图像坐标→屏幕坐标的自动平移），桌面游戏适配者**只需继承并实现 check/reset**。`Environment` 契约本身保持最小，为仿真器（EmulatorEnv）、浏览器（BrowserEnv）等 capture/act 结构不同的源留接入位。
+
 ### 3.2 Perception（感知器）
 
 把一帧画面变成结构化情报 `FrameAnalysis`：截图原图 + 可交互元素列表（文字、坐标、置信度）。
@@ -119,7 +121,41 @@ LLM 可插拔的关键是一个极窄的 Decider 接口：`async decide(prompt, 
 
 框架的天花板 ≠ LLM 的天花板：LLM 换代升级，框架自动受益——因为它只做"供给"，不做"智能"。基础设施的生命周期远长于任何一代模型。
 
-## 5. 与现有代码的对应
+## 5. 研究扩展点（Research Extension Points）
+
+> 定位口号：**我们把管道冻住，好让你的想法成为唯一的变量。**
+
+框架同时服务"用 Agent 的人"和"研究 Agent 的人"，切分方式不是"用户 vs 研究者"，而是**该冻结什么、该开放什么**：
+
+| 层 | 策略 | 理由 |
+|---|---|---|
+| 管道（循环骨架、动作解析、重试机制） | **冻结** | 这是实验的控制变量。harness 不统一则分数不可比——ARC-AGI-3 同一模型标准 harness 62.7% vs 定制 harness 99.9% 的争议即为例证。冻结管道保证：替换某个机制后的提升只能归因于该机制，而非工程质量差异 |
+| 机制（决策/记忆/感知/组装） | **开放为插槽** | 这是研究者的实验变量 |
+| 环境 + 考题 | **共享** | 这是考场。Gym 之于 RL、SWE-bench 之于软件工程 Agent——环境标准化恰恰释放研究，没人需要自建 Pong |
+
+### 可换插槽清单
+
+| 研究变量 | 替换点 | 形态 |
+|---|---|---|
+| 决策/提示策略 | `Decider` | 一个 async 函数（收 prompt+截图，吐动作文本） |
+| 记忆机制 | `HistoryManager` | 一个类 |
+| 上下文组装策略 | `ContextAssembler` | 一个类 |
+| 感知/grounding | `Perception` | 一个类 |
+| 模型对比 | `make_llm_decider` | 一行配置 |
+
+替换任一插槽的验收标准即第 4 节的责任边界测试：只动一个组件，框架其余部分零改动。
+
+### 诚实边界
+
+- **循环骨架本身**不在研究支持面内（分层控制、多智能体、树搜索式循环需 fork）——历史上这类研究者本就自建 harness，框架不为他们设计
+- **无训练接口**：刻意不设 reward 信号（LLM 推理驱动，非 RL 训练框架），训练场景不适用
+- 目标研究受众是**没有资源自建环境+考题+benchmark 的研究者**（研究生、独立研究者、小实验室），而非已有全套基建的顶级实验室
+
+### 世界模型对接舱
+
+`Environment` 抽象同时是世界模型研究的接口：一个学习出来的世界模型（生成式模拟器）可以**作为一个 Environment 直接插入**——用模型环境替代真实游戏跑 benchmark，即 Real2Sim 的实验形态。"用户口"与"研究者口"在此是同一个口。
+
+## 6. 与现有代码的对应
 
 | 模块 | 处置 |
 |---|---|
@@ -130,9 +166,9 @@ LLM 可插拔的关键是一个极窄的 Decider 接口：`async decide(prompt, 
 | `script/validator.py` | check() 判分的雏形 |
 | `agent/agent.py`（对话式） | 退役：对话历史+启发式抽代码模式与单步决策范式冲突 |
 
-## 6. v1.0 实现状态
+## 7. v1.0 实现状态
 
-已实现（`src/framework/`）：types / env/base / env/mock_env / perception / context / history / runner / llm_adapter，冒烟测试 5/5 通过。
+已实现（`src/framework/`）：types / env/base / env/mock_env / env/window_env / perception / context / history / runner / llm_adapter，框架冒烟测试 9/9 通过（另：旧 `test_agent.py`、`test_llm.py` 属遗留对话应用的失效测试，随旧世界清理一并删除）。
 
 **基线数据**（qwen2.5vl:7b，MockEnv 点方块任务，n=10，2026-09-19）：
 
