@@ -49,12 +49,14 @@ class AgentRunner:
         self.env.reset()
         self.history.clear()
         actions: list[Action] = []
+        step_feedback: str | None = None
 
         for step in range(1, task.timeout_steps + 1):
             frame = self.env.capture()
-            prompt = self.assembler.build(task, frame, self.history.view())
+            prompt = self.assembler.build(task, frame, self.history.view(),
+                                          step_feedback=step_feedback)
 
-            action = await self._decide_with_retry(task, frame, prompt)
+            action = await self._decide_with_retry(task, frame, prompt, step_feedback)
             actions.append(action)
 
             self.env.act(action)
@@ -66,9 +68,17 @@ class AgentRunner:
             if status is not Status.RUNNING:
                 return RunResult(status=status, steps=step, actions=actions)
 
+            # 任务尚未完成 → 为下一步注入显式反馈（破解"原样重复同一动作"的僵死循环）
+            step_feedback = (
+                f"上一步你执行了 {action.describe()}，动作已执行但任务仍未完成。"
+                f"请对比画面与上一步的差异，不要原样重复同一动作；"
+                f"若是坐标问题，请根据目标的实际位置修正坐标。"
+            )
+
         return RunResult(status=Status.FAIL, steps=task.timeout_steps, actions=actions)
 
-    async def _decide_with_retry(self, task: Task, frame, base_prompt: str) -> Action:
+    async def _decide_with_retry(self, task: Task, frame, base_prompt: str,
+                                 step_feedback: str | None) -> Action:
         prompt, feedback = base_prompt, None
         for _ in range(self.parse_retries + 1):
             raw = await self.decider(prompt, frame.screenshot)
@@ -78,6 +88,6 @@ class AgentRunner:
                 feedback = str(e)
                 prompt = self.assembler.build(
                     task=task, frame=frame, history=self.history.view(),
-                    error_feedback=feedback,
+                    error_feedback=feedback, step_feedback=step_feedback,
                 )
         raise ActionParseError(f"重试 {self.parse_retries + 1} 次仍无法解析动作，最后错误: {feedback}")

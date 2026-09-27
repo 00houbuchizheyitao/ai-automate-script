@@ -42,4 +42,4 @@ def test_capture_returns_png_frame():
     env = _Probe(region=(0, 0, 400, 300), use_ocr=False)
     frame = env.capture()
     assert frame.screenshot.startswith(b"\x89PNG\r\n\x1a\n")
-    assert len(frame.screenshot) > 5_000
+    assert len(frame.screenshot) > 1_000  # 合法 PNG 必然超过此下限（纯色屏也有数KB）

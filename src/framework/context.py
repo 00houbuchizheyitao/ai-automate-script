@@ -13,13 +13,16 @@ from src.framework.history import HistoryView
 
 class ContextAssembler:
     def build(self, task: Task, frame: FrameAnalysis, history: HistoryView,
-              error_feedback: str | None = None) -> str:
+              error_feedback: str | None = None,
+              step_feedback: str | None = None) -> str:
         parts = [
             f"# 任务目标（每步都有效）\n{task.goal}",
             f"\n# 可用动作\n{ACTION_SCHEMA_HINT}",
             f"\n# 屏幕尺寸\n{self._screen_size_line(frame)}",
             f"\n# 历史操作\n{history.render()}",
         ]
+        if step_feedback:
+            parts.append(f"\n# 上一步反馈\n{step_feedback}")
         if error_feedback:
             parts.append(f"\n# 上一次输出无效，请修正\n{error_feedback}")
         parts.append(

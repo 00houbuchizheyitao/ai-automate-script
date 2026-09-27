@@ -103,3 +103,36 @@ def test_runner_fail_on_timeout():
 
     assert result.status is Status.FAIL
     assert result.steps == 5
+
+
+def test_step_feedback_injected_on_second_step():
+    """僵死循环修复：第一步未命中时，第二步 prompt 必须带显式反馈"""
+    env = MockEnv(seed=1)
+    env.set_target(500, 200)
+    prompts: list[str] = []
+
+    async def decider(prompt: str, screenshot: bytes) -> str:
+        prompts.append(prompt)
+        if len(prompts) == 1:
+            return json.dumps({"type": "click", "x": 10, "y": 10})   # 脱靶
+        return json.dumps({"type": "click", "x": 500, "y": 200})     # 命中
+
+    runner = AgentRunner(env=env, decider=decider, step_interval_s=0)
+    result = asyncio.run(runner.run(Task(goal="点击白色方块", timeout_steps=10)))
+
+    assert result.status is Status.SUCCESS
+    assert result.steps == 2
+    assert "# 上一步反馈" not in prompts[0]      # 第一步无反馈
+    assert "# 上一步反馈" in prompts[1]           # 第二步有反馈
+    assert "click(10,10)" in prompts[1]           # 反馈包含上一步动作
+    assert "不要原样重复" in prompts[1]
+
+
+def test_mock_env_notes_explain_red_dots():
+    """红点说明进 notes：让多模态通道知道红点是自己落的、白块才是目标"""
+    env = MockEnv(seed=1)
+    env.set_target(500, 200)
+
+    assert env.capture().notes == ""               # 未点击前无说明
+    env.act(Action(type="click", x=10, y=10))
+    assert "红点" in env.capture().notes           # 点击后出现红点说明

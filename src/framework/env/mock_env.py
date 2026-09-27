@@ -53,7 +53,12 @@ class MockEnv(Environment):
 
         buf = io.BytesIO()
         img.save(buf, format="PNG")
-        return FrameAnalysis(screenshot=buf.getvalue())
+        notes = ""
+        if self._click_history:
+            dots = min(len(self._click_history), 3)
+            notes = (f"画面中的 {dots} 个红点是你此前点击的落点（不是目标），"
+                     f"白色方块才是目标。")
+        return FrameAnalysis(screenshot=buf.getvalue(), notes=notes)
 
     def act(self, action: Action) -> None:
         self._steps += 1
