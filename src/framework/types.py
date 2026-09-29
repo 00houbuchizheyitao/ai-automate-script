@@ -44,6 +44,17 @@ class FrameAnalysis:
             lines.insert(0, self.notes)
         return "\n".join(lines)
 
+    def summary(self) -> str:
+        """单行摘要：供历史记录压缩使用（describe() 的紧凑版）。"""
+        parts = []
+        if self.notes:
+            parts.append(self.notes)
+        if self.elements:
+            shown = ", ".join(f"{e.text!r}@({e.x},{e.y})" for e in self.elements[:5])
+            more = f" 等{len(self.elements)}项" if len(self.elements) > 5 else ""
+            parts.append(f"可见元素: {shown}{more}")
+        return "；".join(parts) if parts else "(画面无明显变化特征)"
+
 
 @dataclass(frozen=True)
 class Task:

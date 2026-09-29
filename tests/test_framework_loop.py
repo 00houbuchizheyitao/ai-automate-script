@@ -11,6 +11,8 @@ from src.framework import (
     Action,
     ActionParseError,
     AgentRunner,
+    Element,
+    FrameAnalysis,
     MockEnv,
     Status,
     Task,
@@ -126,6 +128,20 @@ def test_step_feedback_injected_on_second_step():
     assert "# 上一步反馈" in prompts[1]           # 第二步有反馈
     assert "click(10,10)" in prompts[1]           # 反馈包含上一步动作
     assert "不要原样重复" in prompts[1]
+    assert "800×600" in prompts[0]                # 分辨率数字进 prompt
+    assert "画面无明显变化特征" in prompts[1]      # 历史摘要补实（非占位）
+
+
+def test_frame_analysis_summary():
+    """历史摘要补实：notes 与元素进入单行摘要，不再占位空串"""
+    frame = FrameAnalysis(
+        screenshot=b"",
+        elements=(Element(text="开始游戏", x=100, y=200),
+                  Element(text="设置", x=100, y=260)),
+    )
+    s = frame.summary()
+    assert "开始游戏" in s and "(100,200)" in s and "设置" in s
+    assert FrameAnalysis(screenshot=b"").summary() == "(画面无明显变化特征)"
 
 
 def test_mock_env_notes_explain_red_dots():

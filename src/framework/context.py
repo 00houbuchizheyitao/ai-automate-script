@@ -13,12 +13,13 @@ from src.framework.history import HistoryView
 
 class ContextAssembler:
     def build(self, task: Task, frame: FrameAnalysis, history: HistoryView,
+              screen_size: tuple[int, int] | None = None,
               error_feedback: str | None = None,
               step_feedback: str | None = None) -> str:
         parts = [
             f"# 任务目标（每步都有效）\n{task.goal}",
             f"\n# 可用动作\n{ACTION_SCHEMA_HINT}",
-            f"\n# 屏幕尺寸\n{self._screen_size_line(frame)}",
+            f"\n# 屏幕尺寸\n{self._screen_size_line(screen_size, frame)}",
             f"\n# 历史操作\n{history.render()}",
         ]
         if step_feedback:
@@ -32,6 +33,12 @@ class ContextAssembler:
         return "\n".join(parts)
 
     @staticmethod
-    def _screen_size_line(frame: FrameAnalysis) -> str:
-        return (f"图像为 PNG，坐标原点在左上角，坐标系与图像像素一致。"
-                f"可识别元素数: {len(frame.elements)}")
+    def _screen_size_line(screen_size: tuple[int, int] | None,
+                          frame: FrameAnalysis) -> str:
+        if screen_size:
+            w, h = screen_size
+            base = (f"图像分辨率 {w}×{h} 像素，坐标原点在左上角，"
+                    f"坐标范围 x∈[0,{w - 1}]，y∈[0,{h - 1}]。")
+        else:
+            base = "图像为 PNG，坐标原点在左上角，坐标系与图像像素一致。"
+        return base + f"可识别元素数: {len(frame.elements)}"
