@@ -16,9 +16,16 @@ class Perception:
 
     def _get_ocr(self):
         if self._ocr is None:
-            from src.vision.ocr import OCRProcessor
+            # 优先 RapidOCR（模型随 pip 包分发，无网络依赖）；
+            # 未安装则回退 easyocr（首次初始化需从 GitHub 下载模型）。
+            try:
+                from src.vision.rapid_ocr import RapidOCRProcessor
 
-            self._ocr = OCRProcessor(languages=self._ocr_languages)
+                self._ocr = RapidOCRProcessor()
+            except ImportError:
+                from src.vision.ocr import OCRProcessor
+
+                self._ocr = OCRProcessor(languages=self._ocr_languages)
         return self._ocr
 
     def analyze(self, screenshot: bytes, ocr_enabled: bool | None = None) -> FrameAnalysis:
