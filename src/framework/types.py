@@ -30,10 +30,17 @@ class Element:
 
 @dataclass(frozen=True)
 class FrameAnalysis:
-    """一帧画面的双通道表示：原图给多模态 LLM，结构化层给文本推理。"""
+    """一帧画面的双通道表示：原图给多模态 LLM，结构化层给文本推理。
+
+    annotated/tags：SoM（Set-of-Mark）标注——annotated 是带编号徽章的
+    标注图（与 screenshot 同一画面的副本），tags 是 编号→点击目标点
+    （图像坐标）的映射。Runner 负责把 LLM 引用的编号解析为坐标。
+    """
     screenshot: bytes
     elements: tuple[Element, ...] = ()
     notes: str = ""
+    annotated: bytes | None = None
+    tags: dict[str, tuple[int, int]] | None = None
 
     def describe(self) -> str:
         """结构化通道的文本表示。"""
@@ -84,12 +91,16 @@ class Action:
     x: int | None = None
     y: int | None = None
     ms: int = 50
+    id: str | None = None  # SoM 标记编号：click 时与 x/y 二选一，由 Runner 解析为坐标
 
     def validate(self) -> None:
         if self.type not in ACTION_TYPES:
             raise ValueError(f"未知动作类型: {self.type!r}，可选: {ACTION_TYPES}")
-        if self.type in ("click", "move") and (self.x is None or self.y is None):
-            raise ValueError(f"{self.type} 需要 x/y 坐标")
+        if self.type in ("click", "move"):
+            has_xy = self.x is not None and self.y is not None
+            has_id = self.id is not None and self.type == "click"
+            if not has_xy and not has_id:
+                raise ValueError(f"{self.type} 需要 x/y 坐标或 id 标记")
         if self.type == "key" and not self.key:
             raise ValueError("key 动作需要 key 字段")
 
@@ -97,6 +108,8 @@ class Action:
         if self.type == "key":
             return f"key({self.key})"
         if self.type in ("click", "move"):
+            if self.id is not None and self.x is None:
+                return f"click(id:{self.id})"
             return f"{self.type}({self.x},{self.y})"
         return f"wait({self.ms}ms)"
 
@@ -106,7 +119,11 @@ class ActionParseError(Exception):
 
 
 def parse_action(raw: str, screen_size: tuple[int, int] | None = None) -> Action:
-    """从 LLM 原始输出中提取并校验第一个 JSON 动作。"""
+    """从 LLM 原始输出中提取并校验第一个 JSON 动作。
+
+    id 的坐标解析不在这一步（需要当前帧的标注图），由 Runner 完成；
+    这里只做格式与字段校验。
+    """
     match = re.search(r"\{[^{}]*\}", raw, re.DOTALL)
     if not match:
         raise ActionParseError(f"输出中未找到 JSON 动作。原始输出: {raw[:200]!r}")
@@ -118,6 +135,7 @@ def parse_action(raw: str, screen_size: tuple[int, int] | None = None) -> Action
     if not isinstance(data, dict) or "type" not in data:
         raise ActionParseError(f"JSON 缺少 type 字段: {data}")
 
+    aid = data.get("id")
     try:
         action = Action(
             type=str(data["type"]).strip().lower(),
@@ -125,12 +143,13 @@ def parse_action(raw: str, screen_size: tuple[int, int] | None = None) -> Action
             x=data.get("x"),
             y=data.get("y"),
             ms=int(data.get("ms", 50)),
+            id=str(aid) if aid is not None else None,
         )
         action.validate()
     except (ValueError, TypeError) as e:
         raise ActionParseError(str(e))
 
-    if screen_size and action.type in ("click", "move"):
+    if screen_size and action.type in ("click", "move") and action.x is not None:
         w, h = screen_size
         action = Action(
             type=action.type,
@@ -138,5 +157,6 @@ def parse_action(raw: str, screen_size: tuple[int, int] | None = None) -> Action
             x=max(0, min(action.x, w - 1)),
             y=max(0, min(action.y, h - 1)),
             ms=action.ms,
+            id=action.id,
         )
     return action

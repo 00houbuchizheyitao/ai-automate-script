@@ -8,10 +8,10 @@ from typing import Awaitable, Callable
 
 from src.llm.base import BaseLLMClient
 
-Decider = Callable[[str, bytes], Awaitable[str]]
+Decider = Callable[[str, list[bytes]], Awaitable[str]]
 
 
 def make_llm_decider(client: BaseLLMClient) -> Decider:
-    async def decide(prompt: str, screenshot: bytes) -> str:
-        return await client.generate_with_image(prompt, screenshot)
+    async def decide(prompt: str, images: list[bytes]) -> str:
+        return await client.generate_with_images(prompt, images)
     return decide

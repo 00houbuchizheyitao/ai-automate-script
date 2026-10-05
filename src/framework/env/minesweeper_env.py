@@ -16,10 +16,15 @@ from __future__ import annotations
 import time
 
 from src.framework.env.window_env import WindowEnv
-from src.framework.types import Action, Status, Task
+from src.framework.som import SomTag, draw_som_tags
+from src.framework.types import Action, FrameAnalysis, Status, Task
 
 COLS, ROWS, CELL = 9, 9, 40
 BOARD = (COLS * CELL, ROWS * CELL)  # (360, 360)
+# 棋盘在窗口图像内的偏移：外框含标题栏与边框（Win11 实测 ~31px/~8px）。
+# 若分类错位（所有格子被判成同一状态），用构造参数校正。
+DEFAULT_BOARD_ORIGIN = (8, 31)
+BRIGHTNESS_THRESHOLD = 160  # <160 深灰=未翻开；>=160 浅色=已翻开
 
 
 class MinesweeperEnv(WindowEnv):
@@ -33,10 +38,12 @@ class MinesweeperEnv(WindowEnv):
     """
 
     def __init__(self, window_title: str = "扫雷",
-                 settle_s: float = 0.35, **kwargs):
+                 settle_s: float = 0.35, board_origin: tuple[int, int] | None = None,
+                 **kwargs):
         kwargs.setdefault("region", (0, 0, *BOARD))
         super().__init__(window_title=window_title, **kwargs)
         self.settle_s = settle_s
+        self.board_origin = board_origin or DEFAULT_BOARD_ORIGIN
 
     # ---------- 坐标换算 ----------
 
@@ -48,6 +55,19 @@ class MinesweeperEnv(WindowEnv):
         return (x // CELL, y // CELL)
 
     # ---------- Environment 契约 ----------
+
+    def capture(self) -> FrameAnalysis:
+        frame = super().capture()
+        tags, annotated = self._som(frame.screenshot)
+        # 环境自解释：格子状态的颜色语义 + SoM 用法（MockEnv 红点说明的先例）
+        note = ("棋盘为 9×9 格子铺满整个窗口（每格 40 像素）。"
+                "深灰色格子 = 未翻开（可以点击）；"
+                "浅色格子 = 已翻开（上面可能显示数字），不可再点。"
+                "第二张图是 SoM 编号标注图，点击深灰格子直接引用其编号。")
+        notes = f"{frame.notes}；{note}" if frame.notes else note
+        return FrameAnalysis(screenshot=frame.screenshot,
+                             elements=frame.elements, notes=notes,
+                             annotated=annotated, tags=tags)
 
     def act(self, action: Action) -> None:
         super().act(action)
@@ -74,6 +94,37 @@ class MinesweeperEnv(WindowEnv):
         self.act(Action(type="key", key="r"))
         time.sleep(self.settle_s)
 
+
+    # ---------- SoM：格子分类与编号标注 ----------
+
+    @classmethod
+    def _som(cls, screenshot: bytes) -> tuple[dict[str, tuple[int, int]], bytes]:
+        """按格子平均亮度分类已翻开/未翻开，为未翻开格子生成 SoM 标记。
+
+        纯函数（无窗口依赖）。编号按几何位置固定（row*9+col+1），不随
+        格子状态变化——同一格子的编号在整局游戏中保持稳定。返回
+        (编号→点击目标点映射, 标注图字节)。
+        """
+        import io
+
+        import numpy as np
+        from PIL import Image
+
+        img = np.asarray(Image.open(io.BytesIO(screenshot)).convert("RGB"),
+                         dtype=np.float32)
+        ox, oy = DEFAULT_BOARD_ORIGIN
+        tags_map: dict[str, tuple[int, int]] = {}
+        som_tags: list[SomTag] = []
+        for row in range(ROWS):
+            for col in range(COLS):
+                cx = ox + col * CELL + CELL // 2   # 格子中心（图像坐标）
+                cy = oy + row * CELL + CELL // 2
+                patch = img[max(0, cy - 10):cy + 10, max(0, cx - 10):cx + 10]
+                if patch.mean() < BRIGHTNESS_THRESHOLD:  # 深灰 → 未翻开 → 打标记
+                    tid = str(row * COLS + col + 1)
+                    tags_map[tid] = (cx, cy)
+                    som_tags.append(SomTag(id=tid, x=cx, y=cy))
+        return tags_map, draw_som_tags(screenshot, som_tags)
 
     # ---------- 内容校验：以游戏实际画面为参照物 ----------
 

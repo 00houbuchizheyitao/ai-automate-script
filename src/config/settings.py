@@ -20,6 +20,14 @@ class AppSettings:
     OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen2.5vl:7b")
     OLLAMA_TIMEOUT = int(os.getenv("OLLAMA_TIMEOUT", "120"))
 
+    # 在线多模态模型（OpenAI 兼容端点，GLM 开放平台等）
+    ONLINE_BASE_URL = os.getenv("ONLINE_BASE_URL", "https://open.bigmodel.cn/api/paas/v4")
+    ONLINE_API_KEY = os.getenv("ONLINE_API_KEY", "")
+    ONLINE_MODEL = os.getenv("ONLINE_MODEL", "glm-5.3-flash")
+    ONLINE_TIMEOUT = int(os.getenv("ONLINE_TIMEOUT", "120"))
+    ONLINE_THINKING = os.getenv("ONLINE_THINKING", "off")  # off=禁用思考加速单步决策 / on / low/high/max（始终思考型模型的档位）
+    ONLINE_MAX_TOKENS = int(os.getenv("ONLINE_MAX_TOKENS", "8192"))  # 思考+作答的总预算，防超长生成导致客户端超时
+
     OCR_LANGUAGES = os.getenv("OCR_LANGUAGES", "ch_sim,en").split(",")
     OCR_USE_GPU = os.getenv("OCR_USE_GPU", "false").lower() == "true"
 

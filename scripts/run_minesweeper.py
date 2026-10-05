@@ -22,17 +22,17 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from src.config.settings import AppSettings
 from src.framework import AgentRunner, MinesweeperEnv, Task, make_llm_decider
 from src.framework.types import Status
+from src.llm.online_client import OnlineLLMClient
 from src.llm.ollama_client import OllamaClient
 
-GOAL = ("屏幕是一个 9×9 的扫雷棋盘（每格 40 像素，铺满整个窗口），"
-        "未翻开的格子是深灰色。用鼠标左键点击翻开格子，首次点击必定安全。"
-        "翻开后格子上的数字表示周围 8 格的雷数，根据数字推断哪些格子安全，"
-        "翻开 {need} 个安全格子（翻开数字格也算）。不要点击棋盘以外的区域。")
+GOAL = ("这是扫雷游戏，你的目标是根据当前局面分析下一步翻开哪个格子是安全的。"
+        "发给你的两张图一张是原图一张是序号图，你根据原图分析局面，决定应该翻开哪个格子，"
+        "序号图告诉你每个格子对应的序号，在格子左上角，你想翻开某个格子只要报出序号就行。")
 
 
 async def amain(args: argparse.Namespace) -> int:
     env = MinesweeperEnv()
-    task = Task(goal=GOAL.format(need=args.safe_opens),
+    task = Task(goal=GOAL,
                 timeout_steps=args.steps,
                 meta={"safe_opens": args.safe_opens})
 
@@ -48,7 +48,33 @@ async def amain(args: argparse.Namespace) -> int:
         return 0
 
     settings = AppSettings()
-    runner = AgentRunner(env=env, decider=make_llm_decider(OllamaClient(settings)),
+    if args.llm == "human":
+        # 审查模式：定位窗口 → 截图 + SoM → 生成"将发给 LLM 的完整信息"→ 结束。
+        # 图像经与在线客户端相同的重编码，保证人看到的 = LLM 看到的。
+        from src.framework.human_decider import dump_llm_view
+        md = dump_llm_view(env, task, out_dir="llm_views",
+                           normalizer=OnlineLLMClient._normalize_image)
+        print(f"LLM 视角信息已生成: {md}")
+        print("请在 IDE 中审查：第一张图 = 原始画面，第二张图 = SoM 编号标注图，"
+              "prompt 为将要发送的完整文本（一字不差）。")
+        print("确认信息质量后，用 --llm online 跑真实闭环。")
+        return 0
+    if args.llm == "online":
+        client = OnlineLLMClient(api_key=settings.ONLINE_API_KEY,
+                                 model=args.model or settings.ONLINE_MODEL,
+                                 base_url=settings.ONLINE_BASE_URL,
+                                 timeout=settings.ONLINE_TIMEOUT,
+                                 thinking=settings.ONLINE_THINKING,
+                                 max_tokens=settings.ONLINE_MAX_TOKENS)
+        decider = make_llm_decider(client)
+    else:
+        client = OllamaClient(settings)
+        if args.model:
+            client.model = args.model
+        decider = make_llm_decider(client)
+    if args.llm != "human":
+        print(f"LLM: {client.model} ({args.llm})")
+    runner = AgentRunner(env=env, decider=decider,
                          step_interval_s=0.2, parse_retries=3)
     result = await runner.run(task)
 
@@ -66,15 +92,15 @@ def main() -> None:
     p = argparse.ArgumentParser(description="扫雷首个真实游戏考题")
     p.add_argument("--safe-opens", type=int, default=3, help="需安全翻开的格子数")
     p.add_argument("--steps", type=int, default=10, help="最大步数")
-    p.add_argument("--model", type=str, default=None, help="覆盖 OLLAMA_MODEL")
+    p.add_argument("--llm", choices=("ollama", "online", "human"), default="ollama",
+                   help="模型后端：online = GLM 等在线 API；human = 审查模式"
+                        "（定位窗口→截图+SoM→生成将发给 LLM 的 md→结束，不调用模型）")
+    p.add_argument("--model", type=str, default=None,
+                   help="覆盖模型名（ollama: OLLAMA_MODEL / online: ONLINE_MODEL）")
     p.add_argument("--dry-run", action="store_true",
                    help="只跑感知与判定，不注入键鼠（验证窗口定位/OCR）")
     args = p.parse_args()
 
-    if args.model:
-        # 简单覆盖：让 OllamaClient 读到指定模型
-        import src.config.settings as s
-        s.AppSettings.OLLAMA_MODEL = args.model
     raise SystemExit(asyncio.run(amain(args)))
 
 

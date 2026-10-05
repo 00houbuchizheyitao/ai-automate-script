@@ -20,6 +20,13 @@ from src.framework import (
 )
 
 
+def test_parse_id_action():
+    """SoM 编号动作：id 与 x/y 二选一；id 转字符串"""
+    a = parse_action('{"type": "click", "id": 23}')
+    assert a.id == "23" and a.x is None and a.y is None
+    assert a.describe() == "click(id:23)"
+
+
 def test_mock_env_hit_and_miss():
     env = MockEnv(seed=7)
     env.set_target(400, 300)
@@ -47,16 +54,16 @@ def test_parse_action_variants():
 
 
 def test_runner_full_loop_with_scripted_decider():
-    """最小闭环验证：capture → prompt → decide → act → check → 循环终止。"""
+    """最小闭环验证：capture → prompt → decide → act → check → 循环终止"""
     env = MockEnv(seed=1)
     env.set_target(500, 200)
     received_prompts: list[str] = []
 
-    async def scripted_decider(prompt: str, screenshot: bytes) -> str:
+    async def scripted_decider(prompt: str, images: list[bytes]) -> str:
         """模拟一个"完美的多模态LLM"：直接输出命中靶心的动作。
         同时校验管道确实把 prompt 和截图喂了进来。"""
         assert prompt and "任务目标" in prompt
-        assert screenshot[:4] == b"\x89PNG"
+        assert images and images[0][:4] == b"\x89PNG"
         received_prompts.append(prompt)
         return json.dumps({"type": "click", "x": 500, "y": 200})
 
@@ -74,7 +81,7 @@ def test_runner_survives_garbage_then_converges():
     env.set_target(500, 200)
     calls = {"n": 0}
 
-    async def flaky_decider(prompt: str, screenshot: bytes) -> str:
+    async def flaky_decider(prompt: str, images: list[bytes]) -> str:
         calls["n"] += 1
         if calls["n"] == 1:
             return "我觉得应该点中间附近"                      # 无 JSON → 触发重试
@@ -97,7 +104,7 @@ def test_runner_fail_on_timeout():
     env = MockEnv(seed=1)
     env.set_target(500, 200)
 
-    async def stubborn_decider(prompt: str, screenshot: bytes) -> str:
+    async def stubborn_decider(prompt: str, images: list[bytes]) -> str:
         return json.dumps({"type": "click", "x": 10, "y": 10})
 
     runner = AgentRunner(env=env, decider=stubborn_decider, step_interval_s=0)
@@ -130,6 +137,27 @@ def test_step_feedback_injected_on_second_step():
     assert "不要原样重复" in prompts[1]
     assert "800×600" in prompts[0]                # 分辨率数字进 prompt
     assert "画面无明显变化特征" in prompts[1]      # 历史摘要补实（非占位）
+
+
+def test_stagnation_escalates_feedback():
+    """僵滞检测：连续3次相同动作后，反馈升格为强警告（含尝试清单）"""
+    env = MockEnv(seed=1)
+    env.set_target(500, 200)
+    prompts: list[str] = []
+
+    async def fixated_decider(prompt: str, images: list[bytes]) -> str:
+        prompts.append(prompt)
+        return json.dumps({"type": "click", "x": 10, "y": 10})  # 一直脱靶
+
+    runner = AgentRunner(env=env, decider=fixated_decider, step_interval_s=0)
+    result = asyncio.run(runner.run(Task(goal="点击白色方块", timeout_steps=5)))
+
+    assert result.status is Status.FAIL
+    assert "上一步反馈" not in prompts[0]                       # 第1步无反馈
+    assert "不要原样重复" in prompts[1] and "警告" not in prompts[1]   # 第2步普通反馈
+    assert "警告" in prompts[3] and "连续 3 次" in prompts[3]    # 第4步升格
+    assert "click(10,10)" in prompts[3]                         # 列出尝试过的动作
+    assert "改变行为" in prompts[4]                              # 持续升格
 
 
 def test_frame_analysis_summary():

@@ -43,3 +43,6 @@ Thumbs.db
 # Temp files
 tmp/
 temp/
+
+# 人扮演 LLM 的审查日志（本地生成，不入库）
+llm_views/

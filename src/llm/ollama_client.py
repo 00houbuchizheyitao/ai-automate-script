@@ -34,11 +34,9 @@ class OllamaClient(BaseLLMClient):
             except Exception as e:
                 raise Exception(f"连接 Ollama 失败: {str(e)}")
 
-    async def generate_with_image(self, prompt: str, image_bytes: bytes, history: list[dict] | None = None) -> str:
+    async def generate_with_images(self, prompt: str, images: list[bytes], history: list[dict] | None = None) -> str:
         messages = self._build_messages(prompt, history)
-        image_b64 = base64.b64encode(image_bytes).decode()
-
-        messages[-1]["images"] = [image_b64]
+        messages[-1]["images"] = [base64.b64encode(b).decode() for b in images]
 
         async with httpx.AsyncClient(timeout=self.timeout) as client:
             try:
