@@ -31,12 +31,16 @@ GOAL = ("这是扫雷游戏，你的目标是根据当前局面分析下一步�
 
 
 async def amain(args: argparse.Namespace) -> int:
-    env = MinesweeperEnv()
+    if args.env == "virtual":
+        from src.framework import VirtualMinesweeperEnv
+        env = VirtualMinesweeperEnv(seed=args.seed)
+        print(f"无头模式：游戏在进程内运行（seed={args.seed}），不占用桌面")
+    else:
+        env = MinesweeperEnv()
+        print(f"窗口定位: title={env.window_title!r} region={env._resolve_region()}")
     task = Task(goal=GOAL,
                 timeout_steps=args.steps,
                 meta={"safe_opens": args.safe_opens})
-
-    print(f"窗口定位: title={env.window_title!r} region={env._resolve_region()}")
 
     if args.dry_run:
         frame = env.capture()
@@ -92,6 +96,10 @@ def main() -> None:
     p = argparse.ArgumentParser(description="扫雷首个真实游戏考题")
     p.add_argument("--safe-opens", type=int, default=3, help="需安全翻开的格子数")
     p.add_argument("--steps", type=int, default=10, help="最大步数")
+    p.add_argument("--env", choices=("window", "virtual"), default="window",
+                   help="window = 真实游戏窗口（扮演模式/dry-run 用）；"
+                        "virtual = 无头进程内运行（零桌面干扰，无需启动游戏）")
+    p.add_argument("--seed", type=int, default=42, help="virtual 模式的雷位种子")
     p.add_argument("--llm", choices=("ollama", "online", "human"), default="ollama",
                    help="模型后端：online = GLM 等在线 API；human = 审查模式"
                         "（定位窗口→截图+SoM→生成将发给 LLM 的 md→结束，不调用模型）")

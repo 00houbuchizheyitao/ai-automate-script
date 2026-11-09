@@ -1,10 +1,11 @@
 """MinesweeperEnv 单元测试：坐标换算/OCR过滤/内容评分（不依赖游戏窗口）。"""
 import io
 
+import pytest
 from PIL import Image, ImageDraw
 
 from src.framework.env.minesweeper_env import MinesweeperEnv
-from src.framework.types import Element, FrameAnalysis
+from src.framework.types import Element, FrameAnalysis, Status, Task
 
 
 def _png(img: Image.Image) -> bytes:
@@ -24,6 +25,7 @@ def test_board_cell_translation():
 
 def test_opened_cells_counts_digit_cells():
     """数字格计数：同格多读只算一次，非数字与标题栏区元素忽略"""
+    env = MinesweeperEnv()
     frame = FrameAnalysis(
         screenshot=b"",
         elements=(Element(text="1", x=20, y=60),      # (0,1) 棋盘区
@@ -33,8 +35,8 @@ def test_opened_cells_counts_digit_cells():
                   Element(text="旗", x=100, y=100),   # 非数字 → 忽略
                   Element(text="42", x=150, y=15)),   # 标题栏 seed=42 → 排除
     )
-    assert MinesweeperEnv._opened_cells(frame) == 2
-    assert MinesweeperEnv._opened_cells(FrameAnalysis(screenshot=b"")) == 0
+    assert env._opened_cells(frame) == 2
+    assert env._opened_cells(FrameAnalysis(screenshot=b"")) == 0
 
 
 def test_content_score_separates_game_from_ide():

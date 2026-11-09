@@ -6,6 +6,7 @@
 from src.framework.env.base import Environment
 from src.framework.env.mock_env import MockEnv
 from src.framework.env.minesweeper_env import MinesweeperEnv
+from src.framework.env.virtual_minesweeper_env import VirtualMinesweeperEnv
 from src.framework.env.window_env import WindowEnv
 from src.framework.history import HistoryManager
 from src.framework.human_decider import HumanDecider
@@ -25,7 +26,7 @@ from src.framework.types import (
 
 __all__ = [
     "Environment", "MockEnv", "WindowEnv", "MinesweeperEnv",
-    "AgentRunner", "RunResult", "HumanDecider",
+    "VirtualMinesweeperEnv", "AgentRunner", "RunResult", "HumanDecider",
     "Perception", "HistoryManager", "make_llm_decider",
     "Action", "ActionParseError", "parse_action", "ACTION_SCHEMA_HINT",
     "Element", "FrameAnalysis", "Task", "Status",

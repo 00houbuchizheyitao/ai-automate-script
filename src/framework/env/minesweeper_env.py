@@ -44,6 +44,7 @@ class MinesweeperEnv(WindowEnv):
         super().__init__(window_title=window_title, **kwargs)
         self.settle_s = settle_s
         self.board_origin = board_origin or DEFAULT_BOARD_ORIGIN
+        self._title_bar_h = 40  # 真实窗口截图含标题栏，已翻格计数时排除
 
     # ---------- 坐标换算 ----------
 
@@ -98,12 +99,14 @@ class MinesweeperEnv(WindowEnv):
     # ---------- SoM：格子分类与编号标注 ----------
 
     @classmethod
-    def _som(cls, screenshot: bytes) -> tuple[dict[str, tuple[int, int]], bytes]:
+    def _som(cls, screenshot: bytes,
+             origin: tuple[int, int] | None = None) -> tuple[dict[str, tuple[int, int]], bytes]:
         """按格子平均亮度分类已翻开/未翻开，为未翻开格子生成 SoM 标记。
 
         纯函数（无窗口依赖）。编号按几何位置固定（row*9+col+1），不随
         格子状态变化——同一格子的编号在整局游戏中保持稳定。返回
-        (编号→点击目标点映射, 标注图字节)。
+        (编号→点击目标点映射, 标注图字节)。origin 为棋盘原点在图像内
+        的偏移：真实窗口=外框偏移(8,31)，无头渲染=(0,0)。
         """
         import io
 
@@ -112,7 +115,7 @@ class MinesweeperEnv(WindowEnv):
 
         img = np.asarray(Image.open(io.BytesIO(screenshot)).convert("RGB"),
                          dtype=np.float32)
-        ox, oy = DEFAULT_BOARD_ORIGIN
+        ox, oy = origin or DEFAULT_BOARD_ORIGIN
         tags_map: dict[str, tuple[int, int]] = {}
         som_tags: list[SomTag] = []
         for row in range(ROWS):
@@ -155,18 +158,18 @@ class MinesweeperEnv(WindowEnv):
 
     # ---------- 内部 ----------
 
-    @staticmethod
-    def _opened_cells(frame) -> int:
+    def _opened_cells(self, frame) -> int:
         """估算已翻开格数：OCR 到的数字格各占一格（粗估，够判定用）。
 
         连锁翻开的空白格没有数字，OCR 读不到——所以这个计数偏保守。
         判定策略：数字格数 ≥ need 即视为达标（空白格只会更多）。
-        标题栏区域（含 "seed=42" 字样）被排除，防止误计。
+        标题栏区域（含 "seed=42" 字样）被排除——无头渲染没有标题栏，
+        _title_bar_h=0 即不过滤。
         """
         seen: set[tuple[int, int]] = set()
         for e in frame.elements:
             text = e.text.strip()
-            if e.y < 40:  # 标题栏区（外框定位时约39px高），排除 seed=42 误读
+            if e.y < self._title_bar_h:  # 真实窗口=排除标题栏 seed=42 误读
                 continue
             if text.isdigit() and 1 <= int(text) <= 8:
                 cell = MinesweeperEnv.board_cell(e.x, e.y)
