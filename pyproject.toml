@@ -1,7 +1,7 @@
 [project]
 name = "ai-automate-script"
 version = "0.1.0"
-description = "智能自动化脚本生成 Agent - 通过截图和自然语言生成可执行的桌面自动化脚本"
+description = "游戏环境自主 Agent 研究框架：Environment 三方法抽象（capture/act/check）+ SoM 编号感知 + LLM 单步决策闭环"
 readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "MIT"}
@@ -11,7 +11,6 @@ authors = [
 keywords = ["automation", "agent", "pyautogui", "ocr", "llm"]
 
 dependencies = [
-    "flet>=0.25.0",
     "ollama>=0.4.0",
     "easyocr>=1.7.0",
     "pyautogui>=0.9.54",
@@ -24,17 +23,11 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-agent = [
-    "langgraph>=0.2.0",
-]
 dev = [
     "pytest>=8.0.0",
     "pytest-asyncio>=0.24.0",
     "ruff>=0.5.0",
 ]
-
-[project.scripts]
-ai-automate = "src.main:main"
 
 [build-system]
 requires = ["setuptools>=68.0"]

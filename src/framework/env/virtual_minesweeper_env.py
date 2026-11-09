@@ -43,6 +43,7 @@ class VirtualMinesweeperEnv(MinesweeperEnv):
         self.settle_s = settle_s
         self.board_origin = (0, 0)   # 无头画面 = 纯棋盘，无外框偏移
         self._title_bar_h = 0        # 无标题栏 → 已翻格计数不做标题栏过滤
+        self._flagged: set[str] = set()
         from src.framework.perception import Perception
         self._perception = Perception(use_ocr=use_ocr)
         self._app = MinesweeperApp(seed=seed, headless=True)
@@ -63,18 +64,24 @@ class VirtualMinesweeperEnv(MinesweeperEnv):
         from PIL import Image
         png = self._rgb_to_png(Image.frombytes("RGB", self._app.screen.get_size(), raw))
         frame = self._perception.analyze(png)
-        tags, annotated = self._som(png, origin=self.board_origin)
+        opened, tags, annotated = self._som(png, origin=self.board_origin,
+                                            flagged=self._flagged)
         note = ("棋盘为 9×9 格子铺满整个窗口（每格 40 像素）。"
                 "深灰色格子 = 未翻开（可以点击）；"
                 "浅色格子 = 已翻开（上面可能显示数字），不可再点。"
                 "第二张图是 SoM 编号标注图，点击深灰格子直接引用其编号。")
         return FrameAnalysis(screenshot=png, elements=frame.elements,
-                             notes=note, annotated=annotated, tags=tags)
+                             notes=note, annotated=annotated, tags=tags,
+                             opened_ids=frozenset(opened))
 
     def act(self, action: Action) -> None:
         """把逻辑动作注入游戏事件循环（与真实鼠标事件走同一处理路径）。"""
         import pygame as pg
 
+        if action.type == "flag":
+            for tid in action.ids or ([action.id] if action.id else []):
+                self._flagged.add(tid)   # 标记仅驱动 SoM 橙三角，无头环境无旗子
+            return
         if action.type == "click" and action.x is not None and action.y is not None:
             pos = (int(action.x), int(action.y))
             self._app.handle_event(
@@ -91,6 +98,7 @@ class VirtualMinesweeperEnv(MinesweeperEnv):
     def reset(self) -> None:
         """直接重建同种子的 Game——确定性复现，连 R 键都不用模拟。"""
         self._app.new_game(self._seed)
+        self._flagged.clear()
 
     # ---------- 内部 ----------
 

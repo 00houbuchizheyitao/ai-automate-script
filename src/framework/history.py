@@ -13,7 +13,7 @@ from src.framework.types import Action, Status
 class Step:
     index: int
     analysis_summary: str
-    action: Action
+    actions: list[Action]  # 本步执行的动作（多格决策为多个）
     status: Status
 
 
@@ -33,8 +33,9 @@ class HistoryManager:
         self.window = window
         self._steps: list[Step] = []
 
-    def record(self, step_index: int, analysis_summary: str, action: Action, status: Status) -> None:
-        self._steps.append(Step(step_index, analysis_summary, action, status))
+    def record(self, step_index: int, analysis_summary: str,
+               actions: list[Action], status: Status) -> None:
+        self._steps.append(Step(step_index, analysis_summary, actions, status))
 
     def view(self) -> HistoryView:
         """最近 window 步全量，更早的压成一行摘要（信息选择性供给）。"""
@@ -42,15 +43,16 @@ class HistoryManager:
         older = self._steps[:-self.window]
         if older:
             fails = sum(1 for s in older if s.status == Status.FAIL)
+            older_desc = " → ".join(a.describe() for s in older[-5:] for a in s.actions)
             lines.append(
-                f"(更早 {len(older)} 步摘要: "
-                f"动作依次为 {', '.join(s.action.describe() for s in older[-5:])}"
+                f"(更早 {len(older)} 步摘要: 动作依次为 {older_desc}"
                 + (f"；其中 {fails} 步后未达标" if fails else "") + ")"
             )
         for s in self._steps[-self.window:]:
+            desc = " → ".join(a.describe() for a in s.actions) or "(无动作)"
             lines.append(
                 f"第{s.index}步: 画面={s.analysis_summary or '(同前)'} "
-                f"→ 动作={s.action.describe()} → 状态={s.status.value}"
+                f"→ 动作={desc} → 状态={s.status.value}"
             )
         return HistoryView(lines=lines)
 

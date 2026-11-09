@@ -13,6 +13,7 @@ from src.framework.human_decider import HumanDecider
 from src.framework.llm_adapter import make_llm_decider
 from src.framework.perception import Perception
 from src.framework.runner import AgentRunner, RunResult
+from src.framework.run_trace import RunTraceLogger
 from src.framework.types import (
     ACTION_SCHEMA_HINT,
     Action,
@@ -27,6 +28,7 @@ from src.framework.types import (
 __all__ = [
     "Environment", "MockEnv", "WindowEnv", "MinesweeperEnv",
     "VirtualMinesweeperEnv", "AgentRunner", "RunResult", "HumanDecider",
+    "RunTraceLogger",
     "Perception", "HistoryManager", "make_llm_decider",
     "Action", "ActionParseError", "parse_action", "ACTION_SCHEMA_HINT",
     "Element", "FrameAnalysis", "Task", "Status",

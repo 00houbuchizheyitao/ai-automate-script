@@ -24,9 +24,9 @@ class AppSettings:
     ONLINE_BASE_URL = os.getenv("ONLINE_BASE_URL", "https://open.bigmodel.cn/api/paas/v4")
     ONLINE_API_KEY = os.getenv("ONLINE_API_KEY", "")
     ONLINE_MODEL = os.getenv("ONLINE_MODEL", "glm-5.3-flash")
-    ONLINE_TIMEOUT = int(os.getenv("ONLINE_TIMEOUT", "120"))
+    ONLINE_TIMEOUT = int(os.getenv("ONLINE_TIMEOUT", "60"))  # 流式读超时=两次字节最大间隔：挂死几十秒即判定并自动重试（非流式时代的"总等待"语义已废）
     ONLINE_THINKING = os.getenv("ONLINE_THINKING", "off")  # off=禁用思考加速单步决策 / on / low/high/max（始终思考型模型的档位）
-    ONLINE_MAX_TOKENS = int(os.getenv("ONLINE_MAX_TOKENS", "8192"))  # 思考+作答的总预算，防超长生成导致客户端超时
+    ONLINE_MAX_TOKENS = int(os.getenv("ONLINE_MAX_TOKENS", "0"))  # 0=不传该字段（无框架上限，服务端兜底）；正值=单次生成硬顶
 
     OCR_LANGUAGES = os.getenv("OCR_LANGUAGES", "ch_sim,en").split(",")
     OCR_USE_GPU = os.getenv("OCR_USE_GPU", "false").lower() == "true"

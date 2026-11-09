@@ -3,11 +3,12 @@
 经典 SoM（microsoft/SoM）依赖检测模型寻找元素；本框架的 SoM 由
 Environment 自行声明元素位置（确定性几何或未来的检测模型皆可作为
 来源），这里只负责两件事：
-1. 在截图副本上绘制编号徽章（避开元素主体，防止遮挡关键信息）
+1. 在截图副本上绘制编号徽章（画在目标点正中，序号一眼对应格子；
+   且不靠图像边缘——贴边目标点的徽章不会被裁掉）
 2. 输出 编号→点击目标点（图像坐标） 的映射，由 Runner 解析 LLM 引用
 
-注意：徽章绘制位置 ≠ 点击目标点。例如扫雷把徽章画在格子左上角，
-但点击目标点是格子中心（那里才是"安全落点"）。
+例如扫雷：目标点 = 格子中心，序号正好落在格子中间（未翻开格中央
+无内容，徽章不遮挡任何关键信息）。
 """
 from __future__ import annotations
 
@@ -24,7 +25,7 @@ BADGE_RADIUS = 11
 @dataclass(frozen=True)
 class SomTag:
     id: str
-    x: int  # 点击目标点（图像坐标）——注意≠徽章绘制位置
+    x: int  # 目标点（图像坐标），徽章画在此处
     y: int
 
 
@@ -46,10 +47,9 @@ def draw_som_tags(screenshot: bytes, tags: list[SomTag]) -> bytes:
     draw = ImageDraw.Draw(img)
     font = _load_font(13)
     for t in tags:
-        bx, by = t.x - 20, t.y - 20  # 徽章在目标点左上偏移处，避开元素主体
-        draw.ellipse([bx - BADGE_RADIUS, by - BADGE_RADIUS,
-                      bx + BADGE_RADIUS, by + BADGE_RADIUS], fill=BADGE_COLOR)
-        draw.text((bx, by), t.id, fill=TEXT_COLOR, font=font, anchor="mm")
+        draw.ellipse([t.x - BADGE_RADIUS, t.y - BADGE_RADIUS,
+                      t.x + BADGE_RADIUS, t.y + BADGE_RADIUS], fill=BADGE_COLOR)
+        draw.text((t.x, t.y), t.id, fill=TEXT_COLOR, font=font, anchor="mm")
     buf = io.BytesIO()
     img.save(buf, format="PNG")
     return buf.getvalue()

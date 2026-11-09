@@ -45,6 +45,7 @@ class MinesweeperEnv(WindowEnv):
         self.settle_s = settle_s
         self.board_origin = board_origin or DEFAULT_BOARD_ORIGIN
         self._title_bar_h = 40  # 真实窗口截图含标题栏，已翻格计数时排除
+        self._flagged: set[str] = set()  # LLM 推理标记的雷格编号（整局累积）
 
     # ---------- 坐标换算 ----------
 
@@ -59,20 +60,41 @@ class MinesweeperEnv(WindowEnv):
 
     def capture(self) -> FrameAnalysis:
         frame = super().capture()
-        tags, annotated = self._som(frame.screenshot)
-        # 环境自解释：格子状态的颜色语义 + SoM 用法（MockEnv 红点说明的先例）
+        opened, tags, annotated = self._som(frame.screenshot,
+                                            flagged=self._flagged)
+        # 环境自解释：格子状态的颜色语义 + SoM/旗子说明（MockEnv 红点说明的先例）
         note = ("棋盘为 9×9 格子铺满整个窗口（每格 40 像素）。"
-                "深灰色格子 = 未翻开（可以点击）；"
-                "浅色格子 = 已翻开（上面可能显示数字），不可再点。"
-                "第二张图是 SoM 编号标注图，点击深灰格子直接引用其编号。")
+                "深灰色格子 = 未翻开（可以点击或标记）；"
+                "浅色格子 = 已翻开（上面可能显示数字），不可再点；"
+                "橙色三角 = 你此前推理出的雷格标记。"
+                "第二张图是 SoM 编号标注图（未翻开的格子中间有品红编号徽章），"
+                "点击或标记深灰格子直接引用其编号。")
         notes = f"{frame.notes}；{note}" if frame.notes else note
         return FrameAnalysis(screenshot=frame.screenshot,
                              elements=frame.elements, notes=notes,
-                             annotated=annotated, tags=tags)
+                             annotated=annotated, tags=tags,
+                             opened_ids=frozenset(opened))
 
     def act(self, action: Action) -> None:
+        if action.type == "flag":
+            self._flag(action)
+            return
         super().act(action)
         time.sleep(self.settle_s)  # 连锁翻格/结算画面需要渲染时间
+
+    def _flag(self, action: Action) -> None:
+        """标记雷格：仅更新内部标记集合（驱动 SoM 橙三角），不注入键鼠。
+
+        游戏内的右键插旗对 Agent 判定无影响（Agent 不使用旗子信息），
+        且右键注入有误触菜单风险——标记以纯视觉反馈呈现。
+        """
+        for tid in action.ids or ([action.id] if action.id else []):
+            self._flagged.add(tid)
+        time.sleep(self.settle_s)
+
+    def click_cell(self, col: int, row: int) -> None:
+        """无头模式的便捷点击：左键翻开 (col,row) 格。"""
+        self.act(Action(type="click", x=col * 40 + 20, y=row * 40 + 20))
 
     def check(self, task: Task) -> Status:
         """判定：OCR 找大号 WIN/LOSE 结算字样，否则数已翻安全格。"""
@@ -100,34 +122,63 @@ class MinesweeperEnv(WindowEnv):
 
     @classmethod
     def _som(cls, screenshot: bytes,
-             origin: tuple[int, int] | None = None) -> tuple[dict[str, tuple[int, int]], bytes]:
-        """按格子平均亮度分类已翻开/未翻开，为未翻开格子生成 SoM 标记。
+             origin: tuple[int, int] | None = None,
+             flagged: set[str] | None = None
+             ) -> tuple[set[str], dict[str, tuple[int, int]], bytes]:
+        """按格子平均亮度分类格子状态，输出 SoM 标注。
 
         纯函数（无窗口依赖）。编号按几何位置固定（row*9+col+1），不随
-        格子状态变化——同一格子的编号在整局游戏中保持稳定。返回
-        (编号→点击目标点映射, 标注图字节)。origin 为棋盘原点在图像内
-        的偏移：真实窗口=外框偏移(8,31)，无头渲染=(0,0)。
+        格子状态变化——同一格子的编号在整局游戏中保持稳定。
+        返回 (已翻开格编号集合, 未翻开格编号→中心坐标映射, 标注图字节)；
+        标注图只做两件事：未翻开格画品红编号徽章（SoM 唯一职责），
+        flagged 中的编号画橙色三角（雷标记，已翻开的跳过）。
         """
         import io
 
         import numpy as np
-        from PIL import Image
+        from PIL import Image, ImageDraw, ImageFont
 
-        img = np.asarray(Image.open(io.BytesIO(screenshot)).convert("RGB"),
-                         dtype=np.float32)
+        img = Image.open(io.BytesIO(screenshot)).convert("RGB")
+        arr = np.asarray(img, dtype=np.float32)
+        draw = ImageDraw.Draw(img)
+        try:
+            font = ImageFont.truetype(r"C:\Windows\Fonts\consola.ttf", 14)
+        except OSError:
+            font = ImageFont.load_default()
         ox, oy = origin or DEFAULT_BOARD_ORIGIN
+        ih, iw = arr.shape[:2]
+        opened: set[str] = set()
         tags_map: dict[str, tuple[int, int]] = {}
         som_tags: list[SomTag] = []
         for row in range(ROWS):
             for col in range(COLS):
                 cx = ox + col * CELL + CELL // 2   # 格子中心（图像坐标）
                 cy = oy + row * CELL + CELL // 2
-                patch = img[max(0, cy - 10):cy + 10, max(0, cx - 10):cx + 10]
-                if patch.mean() < BRIGHTNESS_THRESHOLD:  # 深灰 → 未翻开 → 打标记
-                    tid = str(row * COLS + col + 1)
+                # 采样窗 clamp 到图像边界：真实窗口截图边缘格子（棋盘原点
+                # 偏移导致采样窗越界）会切出空数组产生 NaN，误判格子状态
+                x0, x1 = max(0, cx - 10), min(iw, cx + 10)
+                y0, y1 = max(0, cy - 10), min(ih, cy + 10)
+                if x0 >= x1 or y0 >= y1:
+                    continue  # 格子中心完全在图像外 → 无法采样，跳过
+                patch = arr[y0:y1, x0:x1]
+                tid = str(row * COLS + col + 1)
+                if patch.mean() >= BRIGHTNESS_THRESHOLD:  # 浅色 → 已翻开，不打标记
+                    opened.add(tid)
+                else:                                     # 深灰 → 未翻开 → 编号徽章
                     tags_map[tid] = (cx, cy)
                     som_tags.append(SomTag(id=tid, x=cx, y=cy))
-        return tags_map, draw_som_tags(screenshot, som_tags)
+        for tid in (flagged or ()):  # 推理出的雷格 → 橙色三角（覆盖在原画面上）
+            if tid in opened:
+                continue  # 已翻开的格子不再画雷标记
+            col, row = (int(tid) - 1) % COLS, (int(tid) - 1) // COLS
+            cx, cy = ox + col * CELL + CELL // 2, oy + row * CELL + CELL // 2
+            draw.polygon([(cx, cy - 9), (cx + 8, cy), (cx, cy + 9)],
+                         fill=(239, 108, 0))
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        # 编号徽章最后统一叠加（SoM 工具绘制：徽章画在格子中心，
+        # 贴边的第一行/列序号不会被截图边缘裁掉）
+        return opened, tags_map, draw_som_tags(buf.getvalue(), som_tags)
 
     # ---------- 内容校验：以游戏实际画面为参照物 ----------
 

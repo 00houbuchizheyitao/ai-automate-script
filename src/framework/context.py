@@ -15,23 +15,54 @@ class ContextAssembler:
     def build(self, task: Task, frame: FrameAnalysis, history: HistoryView,
               screen_size: tuple[int, int] | None = None,
               error_feedback: str | None = None,
-              step_feedback: str | None = None) -> str:
+              step_feedback: str | None = None,
+              conclusions: list[str] | None = None,
+              include_action_options: bool = True) -> str:
+        """组装发给 LLM 的完整信息。
+
+        include_action_options=False 用于 Function Calling 模式：动作格式由
+        API 层 tools schema 声明（硬约束），prompt 不再重复 JSON 写法，
+        只保留任务/局面/结论——两种协议下 prompt 差异即实验对照组。
+        """
         if frame.tags:
-            # SoM 极简模式：信息 = 任务目标 + 可翻开的格子编号（+ 附图）。
-            # 局面理解完全交给模型看原图；已翻开的格子不在编号列表里，
-            # 模型引用其编号会被 Runner 拒绝并获得纠错反馈。
+            # SoM 极简模式（三段结构，固定契约）：固定信息 + 行动选项 +
+            # 过往推理结论。局面理解完全交给模型看原图；已翻开的格子不在
+            # 编号列表里，模型引用其编号会被 Runner 拒绝并触发重试。
+            # error_feedback / step_feedback 仅完整模式消费——本结构不注入
+            # 任何额外段落，解析失败重试 = 原样重发（靠模型重答）。
             ids = ", ".join(sorted(frame.tags, key=lambda s: int(s) if s.isdigit() else 0))
-            parts = [task.goal,
-                     f"\n# 可翻开的格子\n{ids}",
-                     '\n翻开某个格子输出：{"type": "click", "id": "编号"}']
-            if error_feedback:
-                parts.append(f"\n# 上一次输出无效，请修正\n{error_feedback}")
+            fixed = task.goal + (
+                "\n其中有橙色三角形标记的格子是你之前推理出来有雷的格子。"
+                if self._has_flags(frame) else "")
+            parts = [fixed,
+                     f"\n# 可翻开的格子\n{ids}"]
+            if include_action_options:
+                parts.append("\n# 行动选项\n"
+                             "翻开格子（一个或多个）：{\"type\": \"click\", \"id\": \"编号\"} 或 "
+                             "{\"type\": \"click\", \"ids\": [\"编号1\", \"编号2\"]}\n"
+                             "标记雷格（一个或多个）：{\"type\": \"flag\", \"id\": \"编号\"} 或 "
+                             "{\"type\": \"flag\", \"ids\": [\"编号1\", \"编号2\"]}")
+            if conclusions:
+                numbered = "\n".join(f"{i}. {c}" for i, c in enumerate(conclusions, 1))
+                parts.append(f"\n# 上一步推理结论（有助于你本次推理）\n{numbered}")
+            if include_action_options:
+                parts.append("\n# 你推理出的结论（可选）\n"
+                             "你推理出来的结论如果认为对下一步有用，也可以发回来，"
+                             "下次推理会再发给你帮助你推理——比如你这步推理出某 2 个格子必有一个是雷，"
+                             "那这就是值得发回来的结论。发回格式："
+                             "\"conclusions\": [\"结论1\", \"结论2\"]")
+            else:
+                parts.append("\n# 你推理出的结论（可选）\n"
+                             "如果认为对下一步有用，把它放进动作调用的可选参数 "
+                             "conclusions（字符串数组）——比如你这步推理出某 2 个格子必有一个是雷，"
+                             "那这就是值得下次复用的结论。")
             return "\n".join(parts)
 
         # 完整模式（无 SoM 标注的环境）：全量信息供给
         parts = [
             f"# 任务目标（每步都有效）\n{task.goal}",
-            f"\n# 可用动作\n{ACTION_SCHEMA_HINT}",
+            (f"\n# 可用动作\n{ACTION_SCHEMA_HINT}" if include_action_options
+             else "\n# 可用动作\n通过工具调用执行动作（参数 ids/conclusions 见工具定义）。"),
             f"\n# 屏幕尺寸\n{self._screen_size_line(screen_size, frame)}",
             f"\n# 历史操作\n{history.render()}",
         ]
@@ -46,13 +77,9 @@ class ContextAssembler:
         return "\n".join(parts)
 
     @staticmethod
-    def _som_line(frame: FrameAnalysis) -> str:
-        return ("本次请求附带两张图：第一张是原始画面（用于读取数字等细节），"
-                "第二张是同一画面的 SoM 编号标注图（每个可点击的深灰格子左上角"
-                "有品红色编号徽章）。点击格子时直接引用编号："
-                '{"type": "click", "id": "编号"}，无需坐标。'
-                f"当前可用编号数: {len(frame.tags or {})}。"
-                "若引用已翻开的格子编号会被拒绝。")
+    def _has_flags(frame: FrameAnalysis) -> bool:
+        """notes 中是否声明了橙三角标记（即本局存在已标记雷格）"""
+        return bool(frame.notes) and "橙" in frame.notes
 
     @staticmethod
     def _screen_size_line(screen_size: tuple[int, int] | None,
