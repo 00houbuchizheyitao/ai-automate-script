@@ -1,224 +1,310 @@
-# AI Automate Script
+# Game Agent Framework
 
-> 智能自动化脚本生成 Agent — 通过自然语言（可选截图），让小白用户也能获得可直接运行的桌面自动化脚本
+> 让视觉语言模型只靠「看画面 + 发动作」玩通桌面游戏的最小闭环框架。
 
-## 项目简介
+**状态**：真实窗口闭环已打通（扫雷）、无头环境可复现跑分、双动作协议可 A/B 对比。v1.0 发布前待补量化基线。
 
-AI Automate Script 是一个基于视觉语言模型的智能 Agent，用户通过自然语言描述任务即可获得可直接运行的 Python 自动化脚本。当文字难以描述时（如"点击这个按钮"），用户可以上传带标注的截图，Agent 会理解标注意图并生成对应脚本。
+---
 
-**核心价值**：零编程门槛 → 对话即脚本 → 直接运行完成任务
+## 这个项目要解决什么
 
-## 架构概览
+让 LLM 直接操作 GUI 有三个绕不开的障碍：
 
-```
-┌─────────────────────────────────────────────────────────┐
-│                    用户交互层 (Flet UI)                    │
-│  ┌───────────────────┐  ┌──────────────────────────┐    │
-│  │ 自然语言输入       │  │ 截图附件（可选）          │    │
-│  │ (必填)            │  │ (圈出按钮/箭头指向等)     │    │
-│  └────────┬──────────┘  └────────────┬─────────────┘    │
-└───────────┼──────────────────────────┼──────────────────┘
-            │                          │
-            ▼                          ▼
-┌─────────────────────────────────────────────────────────┐
-│                    Agent 编排层                           │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  │
-│  │ 截图分析      │  │ 意图理解      │  │ 脚本生成      │  │
-│  │ (OCR+VLM)   │  │ (LLM)       │  │ (LLM+模板)   │  │
-│  │ 识别标注意图  │  │              │  │              │  │
-│  └──────────────┘  └──────────────┘  └──────────────┘  │
-│  ┌──────────────────────────────────────────────────┐   │
-│  │ LangGraph 工作流 (规划 → 生成 → 校验 → 修正)      │   │
-│  └──────────────────────────────────────────────────┘   │
-└─────────────────────────────────────────────────────────┘
-            │                          │
-            ▼                          ▼
-┌─────────────────────────────────────────────────────────┐
-│                    基础能力层                             │
-│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌────────┐  │
-│  │ Ollama   │  │ EasyOCR  │  │ mss      │  │ OpenCV │  │
-│  │ (Qwen2.5│  │ (文字识别)│  │ (截屏)   │  │(图像匹配)│ │
-│  │  -VL-7B)│  │          │  │          │  │        │  │
-│  └──────────┘  └──────────┘  └──────────┘  └────────┘  │
-│  ┌──────────────────────────────────────────────────┐   │
-│  │ pyautogui + keyboard (自动化与热键) + ScriptSaver │   │
-│  └──────────────────────────────────────────────────┘   │
-└─────────────────────────────────────────────────────────┘
+1. **坐标不可靠** — 让模型直接输出像素坐标，误差随分辨率放大，且无法察觉自己点错
+2. **输出不合规** — 模型会写错 JSON、漏字段、把推理正文和动作混在一起
+3. **没法判定"它到底行不行"** — 单次演示成功不等于有效，必须有可复现的量化基线
+
+本框架用三条设计分别应对：**SoM 编号感知**、**符号解析 + 反馈重试**、**无头环境 + 固定种子跑分**。
+
+---
+
+## 核心设计
+
+### 1. Environment 三方法契约
+
+任何游戏接入框架只需实现三个核心方法（外加一个尺寸属性；跑分场景还需要 `reset()`），框架其余部分零改动：
+
+```python
+class Environment(ABC):
+    @property
+    def screen_size(self) -> tuple[int, int]: ...  # 坐标校验与裁剪
+    def capture(self) -> FrameAnalysis: ...         # 给模型看世界
+    def act(self, action: Action) -> None: ...      # 让模型动手
+    def check(self, task: Task) -> Status: ...      # 裁判哨子
+    def reset(self) -> None: ...                    # 跑分场景必须实现
 ```
 
-## 技术栈
+`Action` 是游戏无关的键鼠原语词汇表（`key` / `click` / `flag` / `move` / `wait`），`Task` 携带目标声明与成败标准（如"安全翻开 3 格"）。**标准随 Task 传入，机制归 check()** —— 换游戏不用改 Runner。
 
-| 层级 | 技术 | 说明 |
-|------|------|------|
-| UI | Flet | 跨平台桌面/移动端 UI 框架 |
-| LLM | Ollama + Qwen2.5-VL-7B | 本地视觉语言模型 |
-| OCR | EasyOCR | 中英文文字识别 |
-| 截屏 | mss | 高性能屏幕截图 |
-| 图像匹配 | OpenCV | 模板匹配定位界面元素 |
-| 自动化 | pyautogui / keyboard | 鼠标键盘模拟与热键监听 |
-| Agent 工作流 | LangGraph | 多步骤脚本生成流程（规划中） |
-| 打包 | flet pack / PyInstaller | 可执行文件打包 |
-| 安装程序 | Inno Setup | 专业 Windows 安装程序 |
+### 2. SoM（Set-of-Mark）编号感知
 
-## 项目结构
+不让模型输出坐标，而是让它**报编号**：
+
+- 环境在截图副本上把编号徽章画到每个可交互目标的中心（扫雷即格子中心）
+- 同时输出 `编号 → 目标点坐标` 的映射
+- 模型只需输出 `{"type": "click", "ids": ["30", "70"]}`
+- Runner 负责编号 → 坐标解析；**引用不存在的编号视为解析错误**，错误信息（含可用编号列表）回喂给模型重试
+
+这一步把"空间定位"从模型的弱项里摘了出去，也天然产生了合法性校验——编号不在当前帧，就一定点不到。
+
+### 3. 双动作协议（可 A/B）
+
+同一套上层逻辑，两种 LLM 动作协议可切换对比：
+
+| 协议 | 声明方式 | 约束强度 | 开关 |
+|---|---|---|---|
+| `prompt-json` | prompt 里写 JSON 格式示例 | 软约束（靠模型遵守） | 默认 |
+| `function calling` | API 层 `tools` + JSON Schema | 硬约束（工具声明） | `--fc` |
+
+FC 模式下客户端把返回的 `tool_calls` **序列化回动作 JSON 文本**，因此 `parse_action` 与 SoM 编号解析零改动，两种协议的执行语义完全可比。
+
+### 4. 结论记忆（conclusions）
+
+模型每步可附带"值得下一步复用的推理结论"，例如*"31 和 32 中必有一雷"*：
+
+- 只注入**上一步**的结论（旧结论对当前局面已过时）
+- 整局全量累积进 `RunResult.conclusions`，供复盘
+- 解析器兼容多种输出形态（随动作对象、独立 JSON 对象、裸键值、标题后裸数组）
+
+### 5. 管道可靠性
+
+- **解析失败不崩循环**：错误信息作为反馈重建 prompt 重试（`parse_retries`，默认 3）
+- **僵滞检测**：连续 N 次完全相同的非等待动作 → 注入强警告，要求改变行为
+- **流式心跳**：读超时语义 = 两次字节之间的最大间隔，服务端挂死能在几十秒内判定并自动重试一次，无需等满整个生成周期
+- **全链路留档**：每次 LLM 调用（含重试）的 prompt、原始输出、解析结果、耗时、截图全部落盘
+
+---
+
+## 架构
 
 ```
-ai_automate_script/
-├── src/
-│   ├── main.py                     # 应用入口
-│   ├── ui/                         # Flet 前端界面层
-│   │   ├── app.py                  # 主应用
-│   │   ├── chat_view.py            # 聊天界面（截图可选）
-│   │   ├── components/             # UI 组件
-│   │   │   ├── message_bubble.py   # 消息气泡
-│   │   │   └── screenshot_upload.py # 截图上传
-│   │   └── styles.py               # 主题样式
-│   ├── agent/                      # Agent 核心逻辑
-│   │   ├── agent.py                # Agent 编排器
-│   │   ├── graph.py                # LangGraph 工作流
-│   │   ├── prompts/                # Prompt 模板
-│   │   │   ├── system_prompt.py    # 系统提示词
-│   │   │   └── script_generation.py # 脚本生成提示词
-│   │   └── tools/                  # Agent 工具
-│   │       ├── screenshot_analyzer.py # 截图分析（含标注识别）
-│   │       └── script_generator.py    # 脚本生成
-│   ├── llm/                        # LLM 集成层
-│   │   ├── base.py                 # 抽象基类
-│   │   ├── ollama_client.py        # Ollama 实现
-│   │   └── online_client.py        # 在线大模型（预留）
-│   ├── vision/                     # 视觉处理层
-│   │   ├── ocr.py                  # EasyOCR 集成
-│   │   ├── screen_capture.py       # mss 截屏
-│   │   └── image_processor.py      # OpenCV 图像处理
-│   ├── script/                     # 脚本生成与保存
-│   │   ├── generator.py            # 脚本生成
-│   │   ├── executor.py             # 脚本保存（ScriptSaver）
-│   │   ├── templates/              # 脚本模板
-│   │   │   ├── base_template.py    # 基础模板
-│   │   │   └── gui_automation.py   # GUI 自动化模板
-│   │   └── validator.py            # 脚本校验
-│   └── config/                     # 配置管理
-│       ├── settings.py             # 应用设置
-│       └── constants.py            # 常量定义
-├── assets/                         # 静态资源
-├── tests/                          # 测试套件
-├── scripts/                        # 构建脚本
-│   └── build_installer.iss         # Inno Setup 安装脚本
-├── docs/                           # 项目文档
-│   └── development.md              # 开发指南
-├── requirements.txt                # Python 依赖
-├── pyproject.toml                  # 项目元数据
-├── .gitignore
-├── .env.example                    # 环境变量模板
-└── README.md
+                    ┌───────────────────────────────────────────────┐
+                    │                 AgentRunner                   │
+                    │  capture → assemble → decide → act → check    │
+                    │                    ↑                          │
+                    │            解析失败/僵滞反馈重试                │
+                    └───┬──────────┬────────────┬──────────────┬────┘
+                        │          │            │              │
+              ContextAssembler    │     HistoryManager    RunTraceLogger
+                        │          │      (窗口 5 步)      (md + 截图)
+                        ▼          ▼
+                 FrameAnalysis   Decider（可插拔）
+                 截图 + SoM 标注   ├── OnlineLLMClient   在线 VLM（OpenAI 兼容）
+                 编号→坐标映射     ├── OllamaClient      本地 VLM
+                 可交互元素        └── HumanDecider      人审模式（不调模型）
+                        ▲
+                        │
+                   Environment
+                   ├── WindowEnv ──── MinesweeperEnv        真实窗口 + 真实键鼠
+                   ├── VirtualMinesweeperEnv                无头 SDL + 进程内事件
+                   └── MockEnv                              合成靶子（最小考题）
 ```
+
+两条链路都对同一套 Runner 接口，因此「真实窗口」与「无头」跑的是同一份决策逻辑，只有事件运输方式不同。
+
+---
+
+## 目录结构
+
+```
+src/
+├── framework/
+│   ├── runner.py                     # 循环编排、重试、僵滞检测
+│   ├── context.py                    # prompt 组装（SoM 极简 / 完整两套模板）
+│   ├── types.py                      # Action / Task / FrameAnalysis / parse_action
+│   ├── history.py                    # 分层历史（窗口切片）
+│   ├── som.py                        # 编号徽章绘制 + 坐标映射
+│   ├── perception.py                 # 感知层：一帧画面 → FrameAnalysis
+│   ├── run_trace.py                  # 追踪日志（markdown + 截图落盘）
+│   ├── human_decider.py              # 人审模式：导出"模型将看到的一切"
+│   ├── llm_adapter.py                # LLM 客户端 → Decider 协议
+│   └── env/
+│       ├── base.py                   # Environment 抽象契约
+│       ├── window_env.py             # 窗口定位 + 截屏 + 真实键鼠注入
+│       ├── minesweeper_env.py        # 扫雷适配（check / reset / 标记）
+│       ├── virtual_minesweeper_env.py# 无头扫雷（SDL dummy）
+│       └── mock_env.py               # 合成靶子环境
+├── llm/
+│   ├── online_client.py              # 在线端点：流式、FC、图片重编码
+│   └── ollama_client.py              # 本地端点
+├── vision/                           # 截屏 / OCR / 图像处理
+└── config/settings.py                # .env 配置
+
+scripts/
+├── run_minesweeper.py                # 主入口：真实闭环 / 无头 / 人审 / dry-run
+├── run_mock_llm.py                   # 基准跑分（N 次，输出统计与 markdown）
+├── max_tokens_experiment.py          # 生成长度上限实验
+└── ocr_scale_experiment.py           # OCR 缩放实验
+
+minesweeper.py                        # 游戏本体（pygame，9×9 / 10 雷）
+tests/                                # 9 个测试文件
+```
+
+---
 
 ## 快速开始
 
-### 环境要求
+### 1. 安装
 
-- Python 3.10+
-- [Ollama](https://ollama.ai/) 已安装并运行
-- Windows 10/11
-
-### 安装步骤
-
-1. **克隆项目**
-```bash
-git clone <repository-url>
-cd ai_automate_script
-```
-
-2. **创建虚拟环境**
 ```bash
 python -m venv .venv
 .venv\Scripts\activate
-```
-
-3. **安装依赖**
-```bash
 pip install -r requirements.txt
 ```
 
-4. **安装 Ollama 模型**
+### 2. 配置
+
+复制 `.env.example` 为 `.env`，按需填写：
+
+| 变量 | 默认值 | 说明 |
+|---|---|---|
+| `ONLINE_BASE_URL` | `https://open.bigmodel.cn/api/paas/v4` | OpenAI 兼容端点 |
+| `ONLINE_API_KEY` | （空） | 在线模型密钥，必填才能用 `--llm online` |
+| `ONLINE_MODEL` | `glm-5.3-flash` | 在线模型名 |
+| `ONLINE_TIMEOUT` | `60` | 流式读超时（两次字节最大间隔，秒） |
+| `ONLINE_THINKING` | `off` | `off` / `on` / `low` / `high` / `max` |
+| `ONLINE_MAX_TOKENS` | `0` | 0 = 不传该字段，由服务端兜底 |
+| `OLLAMA_BASE_URL` | `http://localhost:11434` | 本地端点 |
+| `OLLAMA_MODEL` | `qwen2.5vl:7b` | 本地多模态模型 |
+| `OCR_LANGUAGES` | `ch_sim,en` | OCR 语言 |
+
+### 3. 跑起来
+
+**无头模式（推荐先跑这个）** —— 进程内运行，不占桌面、不动鼠标，可以边跑边用电脑：
+
+```bash
+python scripts/run_minesweeper.py --env virtual --llm online --seed 42
+```
+
+**真实窗口模式** —— 需要另开终端启动游戏：
+
+```bash
+# 终端 A
+python minesweeper.py 42
+
+# 终端 B（运行期间不要移动鼠标/键盘）
+python scripts/run_minesweeper.py --env window --llm online
+```
+
+**人审模式** —— 不调模型，只导出"模型将看到的完整信息"（原图 + SoM 标注图 + prompt 原文），用于检查感知质量：
+
+```bash
+python scripts/run_minesweeper.py --env window --llm human
+```
+
+**只看感知不动手**：
+
+```bash
+python scripts/run_minesweeper.py --dry-run
+```
+
+**双协议对比**：
+
+```bash
+python scripts/run_minesweeper.py --env virtual --llm online           # prompt-json
+python scripts/run_minesweeper.py --env virtual --llm online --fc      # function calling
+```
+
+**本地模型**：
+
 ```bash
 ollama pull qwen2.5vl:7b
+python scripts/run_minesweeper.py --env virtual --llm ollama
 ```
 
-5. **配置环境变量**
-```bash
-copy .env.example .env
-# 根据需要修改 .env 中的配置，特别是 SCRIPTS_OUTPUT_DIR
-```
-
-6. **启动应用**
-```bash
-python -m src.main
-```
-
-### 打包发布
+### 4. 测试
 
 ```bash
-# 使用 flet pack 打包
-flet pack src/main.py --name ai_automate_script --icon assets/icons/app.ico
-
-# 使用 Inno Setup 创建安装程序
-# 在 Inno Setup 中编译 scripts/build_installer.iss
-# 安装程序允许用户自选安装路径，脚本输出目录默认为安装目录下的 output/
+pytest -q
 ```
 
-## 核心流程
+---
 
-1. **用户输入**：用自然语言进行交流或描述任务。
-2. **对话交互**：Agent 优先以对话形式回答用户。
-3. **意图确认**：只有当用户明确要求（如“帮我写个脚本”）时，Agent 才进入生成流程。
-4. **截图分析**（如有截图）：EasyOCR 提取文字 → Qwen2.5-VL 分析界面元素和用户标注。
-5. **脚本生成**：基于模板 + LLM 生成包含自动化逻辑（及热键监听，如适用）的 Python 脚本。
-6. **脚本保存**：自动保存到用户配置的输出路径。
-7. **用户运行**：用户自行到输出目录运行脚本。如果涉及热键监听，脚本会自动请求管理员权限。
+## 观测与复盘
 
-## 截图使用场景
+每次运行会生成 `llm_views/run_trace/run_trace.md`，逐步记录 prompt、模型原始输出、解析结果、耗时，并把当步截图落盘。另开终端实时跟踪：
 
-截图是**可选的**，主要用于以下场景：
+```powershell
+Get-Content llm_views\run_trace\run_trace.md -Wait -Tail 30
+```
 
-| 场景 | 示例 |
-|------|------|
-| 用户圈出按钮 | "点击这个按钮" + 圈出截图中的按钮 |
-| 用户箭头指向区域 | "在这个位置输入文字" + 箭头指向输入框 |
-| 用户高亮元素 | "选择这个选项" + 高亮下拉菜单项 |
-| 纯文字描述 | "打开记事本并输入Hello" + 无需截图 |
+失败时这份日志就是唯一的改进依据——能区分「模型推理错」「感知错」「解析错」三种完全不同的故障。
 
-## MVP 范围
+---
 
-### MVP 包含
-- ✅ Flet 聊天 UI（自然语言输入 + 可选截图附件）
-- ✅ Ollama + Qwen2.5-VL-7B 本地推理
-- ✅ EasyOCR 文字识别
-- ✅ 截图标注识别（圈出/箭头/高亮）
-- ✅ pyautogui 脚本生成
-- ✅ 脚本自动保存到用户指定路径
-- ✅ 基础脚本校验
+## 接入新游戏
 
-### MVP 后规划
-- 🔲 LangGraph 多步骤工作流（规划 → 生成 → 校验 → 修正循环）
-- 🔲 在线大模型支持（OpenAI / Claude / Gemini）
-- 🔲 脚本录制回放
-- 🔲 安卓 / iOS 支持
-- 🔲 多语言界面（i18n）
-- 🔲 脚本市场 / 模板库
+1. 继承 `WindowEnv`（窗口游戏）或 `Environment`（自绘/无头）
+2. 实现 `capture()`：返回截图，并可选地给出 `tags`（编号→坐标）与 `notes`（画面语义说明）
+3. 实现 `act()`：把 `Action` 翻译成真实输入
+4. 实现 `check(task)`：判定 SUCCESS / FAIL / RUNNING
+5. 实现 `reset()`：跑分场景必需
 
-## 配置说明
+参考 `src/framework/env/minesweeper_env.py`——它只重写了 `check` / `reset` / `capture` 的增强部分，其余全部继承通用层。
 
-| 环境变量 | 默认值 | 说明 |
-|---------|--------|------|
-| `OLLAMA_BASE_URL` | `http://localhost:11434` | Ollama API 地址 |
-| `OLLAMA_MODEL` | `qwen2.5vl:7b` | 使用的模型名称 |
-| `OLLAMA_TIMEOUT` | `120` | 请求超时时间（秒） |
-| `OCR_LANGUAGES` | `ch_sim,en` | OCR 识别语言 |
-| `OCR_USE_GPU` | `false` | 是否启用 GPU 加速 OCR |
-| `SCRIPTS_OUTPUT_DIR` | `./output` | 脚本输出路径（安装时自选） |
-| `SCRIPT_PAUSE_INTERVAL` | `0.5` | 脚本操作间隔（秒） |
-| `LOG_LEVEL` | `INFO` | 日志级别 |
+---
+
+## 评测
+
+```bash
+python scripts/run_mock_llm.py --runs 10 --save
+```
+
+固定种子锁定考题（第 i 次运行的靶位永远一致），统计命中率 / 平均步数 / 解析错误率 / 平均耗时，结果写入 `benchmark_results/`。
+
+### 已有基线：MockEnv × qwen2.5vl:7b
+
+`benchmark_results/baseline_qwen2.5vl_7b_20260927_232910.md`，10 次运行，最大 15 步：
+
+| 指标 | 结果 |
+|---|---|
+| 命中率 | 8/10 = 80.0% |
+| 平均步数（仅自然结束） | 3.9 |
+| 解析错误率 | 0/10 = 0.0% |
+| 平均耗时 | 7.4 s/次 |
+
+10 次里有 7 次**第一步就命中**；2 次失败的原因都是同一坐标连续重复 15 步——正是僵滞检测要拦的失败模式。
+
+> 该基线只覆盖最简单的合成环境（点击白色方块），用于验证管道可靠性，不代表真实游戏难度。
+
+### 待补：真实闭环基线
+
+<!-- TODO(v1.0): 真实闭环基线待补
+     - 环境：VirtualMinesweeperEnv，seed 42..61（20 局）
+     - 协议：prompt-json vs function calling
+     - 指标：成功率、平均步数、P95 步数、解析错误率、平均耗时、平均调用次数
+     - 记录：模型名 + 日期 + 温度
+-->
+
+---
+
+## 设计取舍
+
+**为什么不用多 Agent / 编排框架**：单局游戏是实时闭环，加一层调度只增加延迟。任务本身不需要任务分解——需要的是更可靠的单步决策。
+
+**为什么不做 RAG**：状态全在当前帧里，没有"检索历史知识"的需求。历史操作已在 `HistoryManager` 里按窗口切片，结论由 `conclusions` 机制显式携带，两者都受控。
+
+**为什么动作层是键鼠原语而不是游戏语义**：保持 Environment 接口与具体游戏解耦。SoM 编号 + 键鼠原语已经足够表达绝大多数 GUI 操作。
+
+**为什么解析器要容忍多种输出形态**：在线模型的实际输出比 schema 松散得多（裸键值、标题后裸数组、推理正文内含 `{1, 10}` 这类集合记号）。与其假设模型守规矩，不如把解析做成逐段尝试 + 平衡括号扫描。
+
+---
+
+## 已知限制
+
+- `check()` 依赖画面判定，OCR 对手写体/低对比度文字不可靠
+- 历史窗口是固定长度切片，没有做摘要压缩
+- 无头环境仅扫雷一套；跨环境泛化尚未量化
+- Function Calling 仅接入了在线端点（Ollama 工具调用格式不同，未接入）
+- 当前为单机单进程，未做并行跑分调度
+
+## Roadmap
+
+- 真实闭环量化基线（20 局 × 双协议）
+- 失败模式分类统计（踩雷 / 步数耗尽 / 解析失败 / 非法编号 / 僵滞）
+- 机器可读 trace（JSONL）+ 聚合脚本
+- 成本与延迟计量（token / 调用次数 / 单步耗时分布）
+- 第二个环境接入，验证框架泛化
 
 ## License
 
