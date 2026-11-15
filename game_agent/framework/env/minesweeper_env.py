@@ -15,9 +15,9 @@ from __future__ import annotations
 
 import time
 
-from src.framework.env.window_env import WindowEnv
-from src.framework.som import SomTag, draw_som_tags
-from src.framework.types import Action, FrameAnalysis, Status, Task
+from game_agent.framework.env.window_env import WindowEnv
+from game_agent.framework.som import SomTag, draw_som_tags
+from game_agent.framework.types import Action, FrameAnalysis, Status, Task
 
 COLS, ROWS, CELL = 9, 9, 40
 BOARD = (COLS * CELL, ROWS * CELL)  # (360, 360)
@@ -46,6 +46,7 @@ class MinesweeperEnv(WindowEnv):
         self.board_origin = board_origin or DEFAULT_BOARD_ORIGIN
         self._title_bar_h = 40  # 真实窗口截图含标题栏，已翻格计数时排除
         self._flagged: set[str] = set()  # LLM 推理标记的雷格编号（整局累积）
+        self._game_over = False  # 结算后禁止继续注入动作（避免“点击重开”）
 
     # ---------- 坐标换算 ----------
 
@@ -96,14 +97,37 @@ class MinesweeperEnv(WindowEnv):
         """无头模式的便捷点击：左键翻开 (col,row) 格。"""
         self.act(Action(type="click", x=col * 40 + 20, y=row * 40 + 20))
 
+    def act(self, action: Action) -> None:
+        """结算后不再注入动作：游戏本体把结算后的左键点击当作“重开”，
+        多格动作里踩雷后的后续点击会意外开启新局。"""
+        if self._game_over:
+            return
+        super().act(action)
+        if action.type in ("click", "key"):
+            self._game_over = self._detect_game_over()
+
+    @staticmethod
+    def _read_result(elements) -> str | None:
+        texts = [e.text.strip().upper() for e in elements]
+        if any("LOSE" in t for t in texts):
+            return "LOSE"
+        if any("WIN" in t for t in texts):
+            return "WIN"
+        return None
+
+    def _detect_game_over(self) -> bool:
+        """轻量检查：窗口截图 + OCR，不生成 SoM 标注。"""
+        frame = super().capture()
+        return self._read_result(frame.elements) is not None
+
     def check(self, task: Task) -> Status:
         """判定：OCR 找大号 WIN/LOSE 结算字样，否则数已翻安全格。"""
         frame = self.capture()
-        texts = [e.text.strip().upper() for e in frame.elements]
+        result = self._read_result(frame.elements)
 
-        if any("LOSE" in t for t in texts):
+        if result == "LOSE":
             return Status.FAIL
-        if any("WIN" in t for t in texts):
+        if result == "WIN":
             return Status.SUCCESS
 
         # 无结算画面：统计已翻开的安全格数（数字格 + 空白格都是安全翻开）
@@ -114,8 +138,11 @@ class MinesweeperEnv(WindowEnv):
 
     def reset(self) -> None:
         """重开一局：结算画面按 R 键；无结算画面时 R 也直接开新局。"""
+        self._game_over = False
         self.act(Action(type="key", key="r"))
         time.sleep(self.settle_s)
+        # R 键生效需要时间；重置后强制解除守卫，避免上一局结算画面误判
+        self._game_over = False
 
 
     # ---------- SoM：格子分类与编号标注 ----------

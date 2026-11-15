@@ -5,7 +5,7 @@ import json
 import httpx
 import pytest
 
-from src.llm.online_client import OnlineLLMClient
+from game_agent.llm.online_client import OnlineLLMClient
 
 
 def _client_with_transport(handler) -> OnlineLLMClient:
@@ -30,7 +30,7 @@ def _patch_asyncclient(monkeypatch, capture: dict, response_body: dict):
     def factory(**kwargs):
         return CapturingClient(**kwargs)
 
-    import src.llm.online_client as mod
+    import game_agent.llm.online_client as mod
     monkeypatch.setattr(mod.httpx, "AsyncClient", factory)
 
 
@@ -111,8 +111,8 @@ def _sse_tool_call(name: str, arguments: str) -> str:
 async def test_function_calling_payload_and_tool_call_merge(monkeypatch):
     """FC 模式：请求带 tools 声明；流式 tool_calls 碎片拼接后产出动作 JSON，
     且能被 Runner 的 parse_action 直接解析（两种协议共用同一解析入口）。"""
-    import src.llm.online_client as mod
-    from src.framework.types import parse_action
+    import game_agent.llm.online_client as mod
+    from game_agent.framework.types import parse_action
 
     capture: dict = {}
     real_client = httpx.AsyncClient
@@ -166,7 +166,7 @@ async def test_progress_callback_reports_received_chars(monkeypatch):
             kwargs["transport"] = httpx.MockTransport(handler)
             super().__init__(**kwargs)
 
-    import src.llm.online_client as mod
+    import game_agent.llm.online_client as mod
     monkeypatch.setattr(mod.httpx, "AsyncClient",
                         lambda **kw: CapturingClient(**kw))
 
@@ -233,7 +233,7 @@ async def test_hang_timeout_retried_then_recovers(monkeypatch):
     对应真实事故：智谱服务端间歇性挂起（连接吊死不吐字节），非流式时代
     客户端无限等待；流式下读超时=字节间隔上限，挂死几十秒即可判定。
     """
-    import src.llm.online_client as mod
+    import game_agent.llm.online_client as mod
 
     real_client = httpx.AsyncClient
     calls = {"n": 0}
@@ -259,3 +259,42 @@ async def test_hang_timeout_retried_then_recovers(monkeypatch):
     out = await client.generate("你好")
     assert out == "恢复后的答案"
     assert calls["n"] == 2  # 挂死后重试成功
+
+
+def _patch_error_response(monkeypatch, status: int, text: str):
+    import game_agent.llm.online_client as mod
+
+    real_client = httpx.AsyncClient
+
+    class ErrorClient(real_client):
+        def __init__(self, **kwargs):
+            kwargs["transport"] = httpx.MockTransport(
+                lambda request: httpx.Response(
+                    status, text=text, request=request,
+                    headers={"content-type": "application/json"}))
+            super().__init__(**kwargs)
+
+    monkeypatch.setattr(mod.httpx, "AsyncClient", lambda **kw: ErrorClient(**kw))
+
+
+@pytest.mark.asyncio
+async def test_400_image_error_includes_vision_hint(monkeypatch):
+    _patch_error_response(
+        monkeypatch, 400,
+        '{"error":{"message":"invalid content type: image_url is not supported"}}')
+    client = OnlineLLMClient(api_key="k", model="text-only",
+                             base_url="https://fake.example/v4", timeout=5)
+    with pytest.raises(Exception, match="不支持图像输入"):
+        await client.generate_with_image("决策", b"\x89PNG")
+
+
+@pytest.mark.asyncio
+async def test_422_tools_error_includes_fc_hint(monkeypatch):
+    _patch_error_response(
+        monkeypatch, 422,
+        '{"error":{"message":"tools are not supported by this model"}}')
+    client = OnlineLLMClient(api_key="k", model="m",
+                             base_url="https://fake.example/v4", timeout=5,
+                             function_calling=True)
+    with pytest.raises(Exception, match="不支持 function calling"):
+        await client.generate("决策")

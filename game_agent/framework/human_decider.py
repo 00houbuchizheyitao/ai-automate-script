@@ -10,9 +10,9 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Callable
 
-from src.framework.context import ContextAssembler
-from src.framework.history import HistoryManager
-from src.framework.types import Task
+from game_agent.framework.context import ContextAssembler
+from game_agent.framework.history import HistoryManager
+from game_agent.framework.types import Task
 
 
 def dump_llm_view(env, task: Task, out_dir: str | Path = "llm_views",

@@ -7,9 +7,9 @@ import numpy as np
 import pytest
 from PIL import Image, ImageDraw
 
-from src.framework import Action, ActionParseError, AgentRunner, MockEnv, Status, Task
-from src.framework.env.minesweeper_env import MinesweeperEnv
-from src.framework.som import SomTag, draw_som_tags
+from game_agent.framework import Action, ActionParseError, AgentRunner, MockEnv, Status, Task
+from game_agent.framework.env.minesweeper_env import MinesweeperEnv
+from game_agent.framework.som import SomTag, draw_som_tags
 
 
 def test_draw_som_tags_produces_annotated_copy():
@@ -109,7 +109,7 @@ def test_runner_rejects_unknown_tag_id():
 
 def _board_image(revealed: set[tuple[int, int]]) -> bytes:
     """合成扫雷棋盘：深灰未翻开格 + 指定坐标的浅色已翻开格（含边框偏移）"""
-    from src.framework.env.minesweeper_env import DEFAULT_BOARD_ORIGIN, CELL, COLS, ROWS
+    from game_agent.framework.env.minesweeper_env import DEFAULT_BOARD_ORIGIN, CELL, COLS, ROWS
     ox, oy = DEFAULT_BOARD_ORIGIN
     img = Image.new("RGB", (ox + 9 * CELL + 8, oy + 9 * CELL + 9), (144, 144, 144))
     d = ImageDraw.Draw(img)
@@ -136,7 +136,7 @@ def test_minesweeper_som_classification():
     assert id_of(8, 8) in tags
     assert len(tags) == 81 - len(revealed)
     # 点击目标点 = 格子中心（图像坐标，含外框偏移）
-    from src.framework.env.minesweeper_env import DEFAULT_BOARD_ORIGIN
+    from game_agent.framework.env.minesweeper_env import DEFAULT_BOARD_ORIGIN
     ox, oy = DEFAULT_BOARD_ORIGIN
     assert tags[id_of(0, 0)] == (ox + 20, oy + 20)
     # 徽章真实画到了标注图上：格子 (0,0) 中心（徽章位置）应为品红系

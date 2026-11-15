@@ -12,9 +12,9 @@ import httpx
 from dotenv import dotenv_values
 from PIL import Image
 
-from src.framework.context import ContextAssembler
-from src.framework.history import HistoryManager
-from src.framework.types import Element, FrameAnalysis, Task
+from game_agent.framework.context import ContextAssembler
+from game_agent.framework.history import HistoryManager
+from game_agent.framework.types import Element, FrameAnalysis, Task
 
 cfg = dotenv_values(Path(__file__).resolve().parent.parent / ".env")
 key = cfg["ONLINE_API_KEY"]

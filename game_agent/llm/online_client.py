@@ -15,43 +15,8 @@ from typing import Callable
 
 import httpx
 
-from src.llm.base import BaseLLMClient
-
-# Function Calling 工具声明：工具名 = 动作类型，参数 = ids + 可选 conclusions。
-# 与 prompt-json 模式共用同一套解析入口（客户端把 tool_calls 序列化成动作
-# JSON 文本），因此两种协议的行为可直接 A/B 对比。
-ACTION_TOOLS: list[dict] = [
-    {"type": "function", "function": {
-        "name": "click",
-        "description": "翻开一个或多个未翻开的格子（扫雷）。编号见 SoM 序号图。",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "ids": {"type": "array", "items": {"type": "string"},
-                        "description": "要翻开的格子编号，如 [\"30\", \"70\"]"},
-                "conclusions": {
-                    "type": "array", "items": {"type": "string"},
-                    "description": "可选：值得下一步复用的推理结论（如某几格恰含一雷）"},
-            },
-            "required": ["ids"],
-        },
-    }},
-    {"type": "function", "function": {
-        "name": "flag",
-        "description": "标记一个或多个确定是雷的格子。编号见 SoM 序号图。",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "ids": {"type": "array", "items": {"type": "string"},
-                        "description": "要标记的雷格编号"},
-                "conclusions": {
-                    "type": "array", "items": {"type": "string"},
-                    "description": "可选：值得下一步复用的推理结论"},
-            },
-            "required": ["ids"],
-        },
-    }},
-]
+from game_agent.llm.actions import ACTION_TOOLS, merge_tool_calls
+from game_agent.llm.base import BaseLLMClient, LLMCapabilities
 
 
 class OnlineLLMClient(BaseLLMClient):
@@ -82,6 +47,15 @@ class OnlineLLMClient(BaseLLMClient):
         # interval<=0 = 每收到一个增量就回调（测试用）
         self.progress_callback = progress_callback
         self.progress_interval_s = progress_interval_s
+
+    @property
+    def capabilities(self) -> LLMCapabilities:
+        return LLMCapabilities(
+            vision=True,
+            # 反映当前实例是否真的会发送 tools；--fc 由构造参数开启
+            function_calling=self.function_calling,
+            streaming=False,  # 公开的 stream_generate 是一次性产出
+        )
 
     # ---------- 请求构造 ----------
 
@@ -188,7 +162,12 @@ class OnlineLLMClient(BaseLLMClient):
                                 finish = choice["finish_reason"]
                 content = "".join(chunks)
                 if tool_calls:
-                    content = self._merge_tool_calls(content, tool_calls)
+                    content = merge_tool_calls(
+                        content,
+                        [{"function": {"name": slot.get("name", ""),
+                                       "arguments": slot.get("arguments", "")}}
+                         for _, slot in sorted(tool_calls.items())],
+                    )
                 if not content.strip() and finish == "length":
                     raise Exception(
                         "响应被生成长度上限截断且答案为空（finish_reason=length）。"
@@ -196,9 +175,17 @@ class OnlineLLMClient(BaseLLMClient):
                         "若已为 0 则触达服务端模型输出上限")
                 return content
             except httpx.HTTPStatusError as e:
-                if e.response.status_code == 401:
+                status = e.response.status_code
+                if status == 401:
                     raise Exception("API Key 无效或过期（401），请检查 .env 中的 ONLINE_API_KEY")
-                raise Exception(f"在线模型请求失败: {e.response.text[:300]}")
+                detail = e.response.text[:300]
+                if status in (400, 422):
+                    hint = self._capability_hint(detail)
+                    if hint:
+                        raise Exception(
+                            f"在线模型请求失败（{status}，可能是模型能力不匹配）："
+                            f"{detail}\n{hint}")
+                raise Exception(f"在线模型请求失败: {detail}")
             except (KeyError, IndexError) as e:
                 raise Exception(f"在线模型响应格式异常: {e}")
             except httpx.HTTPError as e:
@@ -209,41 +196,19 @@ class OnlineLLMClient(BaseLLMClient):
         raise Exception(f"连接在线模型失败（已重试）: {last_err}")
 
     @staticmethod
-    def _merge_tool_calls(content: str, slots: dict[int, dict]) -> str:
-        """把流式累积的 tool_calls 序列化成动作 JSON，追加在推理正文之后。
-
-        输出与非 FC 模式同构（{"type","ids","conclusions"}），因此 Runner 的
-        parse_action / SoM 编号解析零改动；正文里的推理与结论收集也照常工作。
-        多个调用并存时只取最后一个（与 parse_action 的"取末尾终稿"一致，
-        保证两种协议的执行语义可比）。
-        """
-        action: dict | None = None
-        for idx in sorted(slots):
-            slot = slots[idx]
-            name = slot.get("name", "").strip()
-            try:
-                args = json.loads(slot.get("arguments") or "{}")
-            except json.JSONDecodeError:
-                args = {}
-            if not isinstance(args, dict):
-                args = {}
-            if name not in ("click", "flag"):
-                continue  # 未知工具名直接丢弃，交由解析器报"未找到动作"
-            item: dict = {"type": name}
-            ids = args.get("ids")
-            if isinstance(ids, list) and ids:
-                item["ids"] = [str(i) for i in ids]
-            elif args.get("id") is not None:
-                item["id"] = str(args["id"])
-            cons = args.get("conclusions")
-            if isinstance(cons, list) and cons:
-                item["conclusions"] = [str(c) for c in cons]
-            action = item
-        if action is None:
-            return content
-        body = content.rstrip()
-        payload = json.dumps(action, ensure_ascii=False)
-        return f"{body}\n{payload}" if body else payload
+    def _capability_hint(detail: str) -> str:
+        """把 400/422 的原始响应翻译成能力不匹配提示（无匹配时返回空串）。"""
+        text = detail.lower()
+        hints: list[str] = []
+        if any(k in text for k in ("image", "image_url", "vision", "multimodal", "modality")):
+            hints.append(
+                "该模型/端点可能不支持图像输入；本框架每步都会发送截图，"
+                "请更换支持视觉的模型。")
+        if any(k in text for k in ("tool", "function_call", "function calling", "tools")):
+            hints.append(
+                "该端点可能不支持 function calling；可去掉 --fc，"
+                "改用默认 prompt-json 动作协议。")
+        return "\n".join(hints)
 
     # ---------- BaseLLMClient 接口 ----------
 

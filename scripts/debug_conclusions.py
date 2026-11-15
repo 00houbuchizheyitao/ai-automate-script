@@ -5,7 +5,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from src.framework import AgentRunner, MockEnv, Task
+from game_agent.framework import AgentRunner, MockEnv, Task
 
 
 async def decider(prompt, images):

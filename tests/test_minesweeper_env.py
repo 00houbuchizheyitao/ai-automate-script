@@ -4,8 +4,8 @@ import io
 import pytest
 from PIL import Image, ImageDraw
 
-from src.framework.env.minesweeper_env import MinesweeperEnv
-from src.framework.types import Element, FrameAnalysis, Status, Task
+from game_agent.framework.env.minesweeper_env import MinesweeperEnv
+from game_agent.framework.types import Action, Element, FrameAnalysis, Status, Task
 
 
 def _png(img: Image.Image) -> bytes:
@@ -56,3 +56,27 @@ def test_content_score_separates_game_from_ide():
     for y in range(20, 380, 30):
         d.text((10, y), "runner = AgentRunner 123456", fill=(30, 30, 30))
     assert env._content_score(_png(ide)) < 0.3
+
+
+def test_read_result_recognizes_win_lose():
+    assert MinesweeperEnv._read_result(
+        [Element(text="WIN", x=180, y=180)]) == "WIN"
+    assert MinesweeperEnv._read_result(
+        [Element(text="lose", x=180, y=180)]) == "LOSE"
+    assert MinesweeperEnv._read_result(
+        [Element(text="1", x=20, y=60)]) is None
+
+
+def test_act_stops_after_game_over(monkeypatch):
+    """结算后不再注入后续点击，避免真实窗口被“点击重开”。"""
+    env = MinesweeperEnv()
+    calls: list[Action] = []
+    monkeypatch.setattr(
+        "game_agent.framework.env.window_env.WindowEnv.act",
+        lambda self, action: calls.append(action))
+    monkeypatch.setattr(env, "_detect_game_over", lambda: True)
+
+    env.act(Action(type="click", x=20, y=20))
+    assert len(calls) == 1
+    env.act(Action(type="click", x=60, y=20))
+    assert len(calls) == 1  # 第二次点击被 _game_over 拦住

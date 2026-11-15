@@ -7,7 +7,7 @@ import json
 
 import pytest
 
-from src.framework import (
+from game_agent.framework import (
     Action,
     ActionParseError,
     AgentRunner,
@@ -169,9 +169,9 @@ def test_prompt_only_includes_last_step_conclusions():
 def test_fc_mode_prompt_omits_action_options():
     """Function Calling 模式：prompt 不写 JSON 动作格式（schema 走 API 层），
     结论回传改为指向工具的可选参数——两种协议的对照组差异"""
-    from src.framework.context import ContextAssembler
-    from src.framework.history import HistoryManager
-    from src.framework.types import Element, FrameAnalysis
+    from game_agent.framework.context import ContextAssembler
+    from game_agent.framework.history import HistoryManager
+    from game_agent.framework.types import Element, FrameAnalysis
 
     frame = FrameAnalysis(screenshot=b"\x89PNG",
                           elements=(Element("1", 20, 20),),
@@ -279,9 +279,9 @@ def test_som_prompt_never_injects_feedback():
     build（完整模式依赖它），SoM 分支也必须一字不渲染——发给 LLM 的
     信息只含规定内容：固定信息+可翻开格子+行动选项+过往推理结论。
     """
-    from src.framework.context import ContextAssembler
-    from src.framework.history import HistoryManager
-    from src.framework.types import Element, FrameAnalysis
+    from game_agent.framework.context import ContextAssembler
+    from game_agent.framework.history import HistoryManager
+    from game_agent.framework.types import Element, FrameAnalysis
 
     frame = FrameAnalysis(screenshot=b"\x89PNG",
                           elements=(Element("1", 20, 20),),

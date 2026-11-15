@@ -4,7 +4,7 @@ import io
 import pytest
 from PIL import Image, ImageDraw, ImageFont
 
-from src.vision.rapid_ocr import RapidOCRProcessor
+from game_agent.vision.rapid_ocr import RapidOCRProcessor
 
 
 def _digit_image() -> bytes:

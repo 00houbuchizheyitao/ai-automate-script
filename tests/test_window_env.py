@@ -1,8 +1,8 @@
 """WindowEnv 冒烟测试：抽象性、坐标平移、真实截屏（需桌面会话）。"""
 import pytest
 
-from src.framework import WindowEnv
-from src.framework.types import Action, Status
+from game_agent.framework import WindowEnv
+from game_agent.framework.types import Action, Status
 
 
 class _Probe(WindowEnv):
@@ -55,7 +55,7 @@ def test_resolve_region_retries_until_content_visible(monkeypatch):
     import pytest
     from PIL import Image
 
-    from src.framework.env.window_env import WindowEnv
+    from game_agent.framework.env.window_env import WindowEnv
 
     class _GrayEnv(WindowEnv):
         def _content_score(self, png: bytes) -> float:
@@ -64,7 +64,7 @@ def test_resolve_region_retries_until_content_visible(monkeypatch):
             return 1.0 if img.mean() < 150 else 0.0  # 深灰=游戏露出
 
         def check(self, task):
-            from src.framework import Status
+            from game_agent.framework import Status
             return Status.RUNNING
 
     calls = {"n": 0}
@@ -112,14 +112,14 @@ def test_resolve_region_timeout_raises(monkeypatch):
     import pytest
     from PIL import Image
 
-    from src.framework.env.window_env import WindowEnv
+    from game_agent.framework.env.window_env import WindowEnv
 
     class _WhiteEnv(WindowEnv):
         def _content_score(self, png: bytes) -> float:
             return 0.0  # 永远不匹配（模拟持续遮挡）
 
         def check(self, task):
-            from src.framework import Status
+            from game_agent.framework import Status
             return Status.RUNNING
 
     win = types.SimpleNamespace(

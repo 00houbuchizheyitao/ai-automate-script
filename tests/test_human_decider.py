@@ -3,14 +3,14 @@ import asyncio
 
 import pytest
 
-from src.framework import HumanDecider, Task
+from game_agent.framework import HumanDecider, Task
 
 
 @pytest.mark.asyncio
 async def test_dump_llm_view_single_shot(tmp_path):
     """审查模式：一次调用生成 md + 全部附图，prompt 与 Runner 第一步一致，无需交互"""
-    from src.framework import MockEnv
-    from src.framework.human_decider import dump_llm_view
+    from game_agent.framework import MockEnv
+    from game_agent.framework.human_decider import dump_llm_view
 
     env = MockEnv(seed=1)
     env.set_target(500, 200)
@@ -27,13 +27,13 @@ async def test_dump_llm_view_single_shot(tmp_path):
 @pytest.mark.asyncio
 async def test_dump_llm_view_includes_annotated_image(tmp_path):
     """带 SoM 标注的帧：两张图都落盘，md 里标注图排第二"""
-    from src.framework import MockEnv
-    from src.framework.human_decider import dump_llm_view
+    from game_agent.framework import MockEnv
+    from game_agent.framework.human_decider import dump_llm_view
 
     class _AnnotatedMock(MockEnv):
         def capture(self):
             frame = super().capture()
-            from src.framework.types import FrameAnalysis
+            from game_agent.framework.types import FrameAnalysis
             return FrameAnalysis(screenshot=frame.screenshot,
                                  elements=frame.elements, notes=frame.notes,
                                  annotated=frame.screenshot + b"-som")
@@ -52,8 +52,8 @@ async def test_dump_llm_view_includes_annotated_image(tmp_path):
 
 @pytest.mark.asyncio
 async def test_dump_llm_view_applies_normalizer(tmp_path):
-    from src.framework import MockEnv
-    from src.framework.human_decider import dump_llm_view
+    from game_agent.framework import MockEnv
+    from game_agent.framework.human_decider import dump_llm_view
 
     env = MockEnv(seed=1)
     env.set_target(500, 200)

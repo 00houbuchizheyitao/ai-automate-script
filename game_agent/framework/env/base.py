@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 
-from src.framework.types import Action, FrameAnalysis, Status, Task
+from game_agent.framework.types import Action, FrameAnalysis, Status, Task
 
 
 class Environment(ABC):

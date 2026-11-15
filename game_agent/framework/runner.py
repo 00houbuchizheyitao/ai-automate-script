@@ -13,10 +13,10 @@ import time
 from dataclasses import dataclass, field
 from typing import Awaitable, Callable
 
-from src.framework.context import ContextAssembler
-from src.framework.env.base import Environment
-from src.framework.history import HistoryManager
-from src.framework.types import Action, ActionParseError, Status, Task, parse_action
+from game_agent.framework.context import ContextAssembler
+from game_agent.framework.env.base import Environment
+from game_agent.framework.history import HistoryManager
+from game_agent.framework.types import Action, ActionParseError, Status, Task, parse_action
 
 Decider = Callable[[str, list[bytes]], Awaitable[str]]
 
@@ -27,6 +27,7 @@ class RunResult:
     steps: int
     actions: list[Action] = field(default_factory=list)
     conclusions: list[str] = field(default_factory=list)  # 整局累积的推理结论
+    usage: dict = field(default_factory=dict)  # token/耗时合计（含重试调用）
 
 
 class AgentRunner:
@@ -57,10 +58,48 @@ class AgentRunner:
         # Function Calling 模式由 decider 侧声明动作格式 → prompt 省略行动
         # 选项段（Runner 不关心协议细节，只关心"要不要在 prompt 里写格式"）
         self.include_action_options = include_action_options
+        self._usage_total = self._empty_usage()
+
+    @staticmethod
+    def _empty_usage() -> dict:
+        return {
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "prompt_eval_ms": 0.0,
+            "eval_ms": 0.0,
+            "total_ms": 0.0,
+            "calls": 0,
+            "max_seq": 0,
+            "max_prompt_tokens": 0,
+            "max_completion_tokens": 0,
+            "length_stops": 0,
+        }
+
+    def _accumulate_usage(self, usage: dict | None) -> None:
+        """累加一次 LLM 调用的用量；decider 不支持 usage 时静默跳过。"""
+        if not usage:
+            return
+        self._usage_total["calls"] += 1
+        prompt_tokens = int(usage.get("prompt_tokens") or 0)
+        completion_tokens = int(usage.get("completion_tokens") or 0)
+        for key in ("prompt_tokens", "completion_tokens"):
+            self._usage_total[key] += int(usage.get(key) or 0)
+        for key in ("prompt_eval_ms", "eval_ms", "total_ms"):
+            self._usage_total[key] += float(usage.get(key) or 0)
+        # 单次请求的完整序列长度 = prompt + completion，用于确定 num_ctx
+        self._usage_total["max_seq"] = max(
+            self._usage_total["max_seq"], prompt_tokens + completion_tokens)
+        self._usage_total["max_prompt_tokens"] = max(
+            self._usage_total["max_prompt_tokens"], prompt_tokens)
+        self._usage_total["max_completion_tokens"] = max(
+            self._usage_total["max_completion_tokens"], completion_tokens)
+        if usage.get("done_reason") == "length":
+            self._usage_total["length_stops"] += 1
 
     async def run(self, task: Task) -> RunResult:
         self.env.reset()
         self.history.clear()
+        self._usage_total = self._empty_usage()
         actions: list[Action] = []
         step_feedback: str | None = None
         conclusions: list[str] = []       # 整局累积（RunResult 汇总用）
@@ -103,7 +142,8 @@ class AgentRunner:
                 if status is not Status.RUNNING:
                     finish_reason = f"任务判定结束：{status.value}（第 {step} 步判定）"
                     return RunResult(status=status, steps=step, actions=actions,
-                                     conclusions=list(conclusions))
+                                     conclusions=list(conclusions),
+                                     usage=dict(self._usage_total))
 
                 # 僵滞检测：连续 N 次完全相同的非等待动作 → 反馈升格为强警告
                 identical = self._consecutive_identical_count(actions)
@@ -126,7 +166,8 @@ class AgentRunner:
 
             finish_reason = f"步数耗尽：{task.timeout_steps} 步上限用完仍未达标，判定 fail"
             return RunResult(status=Status.FAIL, steps=task.timeout_steps, actions=actions,
-                             conclusions=list(conclusions))
+                             conclusions=list(conclusions),
+                             usage=dict(self._usage_total))
         except Exception as e:
             # 异常也要在追踪留档——复盘时区分"游戏判负"与"框架崩溃"
             finish_reason = f"异常中断：{type(e).__name__}: {e}"
@@ -135,7 +176,8 @@ class AgentRunner:
             if self.tracer:
                 self.tracer.log_finish(
                     reason=finish_reason, steps=step, max_steps=task.timeout_steps,
-                    actions=actions, conclusions=conclusions)
+                    actions=actions, conclusions=conclusions,
+                    usage=self._usage_total)
 
     @staticmethod
     def _consecutive_identical_count(actions: list[Action]) -> int:
@@ -172,6 +214,9 @@ class AgentRunner:
             t0 = time.monotonic()
             raw = await self.decider(prompt, images)
             elapsed = time.monotonic() - t0  # 本次 LLM 调用耗时（含长思考）
+            usage = getattr(self.decider, "last_usage", None)
+            thinking = getattr(self.decider, "last_thinking", "")
+            self._accumulate_usage(usage)
             try:
                 action = parse_action(raw, screen_size)
                 subs, _ = self._resolve_tag(action, frame)
@@ -180,7 +225,7 @@ class AgentRunner:
                         step=step, prompt=prompt, images=images, raw_output=raw,
                         parsed=[a.describe() for a in subs],
                         status="parsed", conclusions=list(action.conclusions),
-                        elapsed_s=elapsed)
+                        elapsed_s=elapsed, usage=usage, thinking=thinking)
                 return subs, action.conclusions
             except ActionParseError as e:
                 feedback = str(e)
@@ -188,7 +233,7 @@ class AgentRunner:
                     self.tracer.log_step(
                         step=step, prompt=prompt, images=images, raw_output=raw,
                         parsed=None, status=f"parse_error: {e}", conclusions=[],
-                        elapsed_s=elapsed)
+                        elapsed_s=elapsed, usage=usage, thinking=thinking)
                 prompt = self.assembler.build(
                     task=task, frame=frame, history=self.history.view(),
                     screen_size=screen_size, error_feedback=feedback,

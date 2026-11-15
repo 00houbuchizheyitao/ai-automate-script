@@ -7,7 +7,7 @@ import json
 
 import pytest
 
-from src.framework import Action, AgentRunner, Status, Task, VirtualMinesweeperEnv
+from game_agent.framework import Action, AgentRunner, Status, Task, VirtualMinesweeperEnv
 
 
 @pytest.fixture(scope="module")
@@ -66,6 +66,22 @@ def test_reset_restores_fresh_board(mines):
     assert len(env.capture().tags) < 81
     env.reset()
     assert len(env.capture().tags) == 81
+
+
+def test_no_actions_after_game_over(mines):
+    """踩雷后同一多格动作里的后续点击不能触发“结算点击重开”。"""
+    env = VirtualMinesweeperEnv(seed=42)
+    safe = next((c, r) for r in range(9) for c in range(9) if (c, r) not in mines)
+    env.act(Action(type="click", x=_center(safe)[0], y=_center(safe)[1]))
+
+    mine = next(iter(mines))
+    env.act(Action(type="click", x=_center(mine)[0], y=_center(mine)[1]))
+    assert env._app.game.result == "LOSE"
+
+    other = next((c, r) for r in range(9) for c in range(9)
+                 if (c, r) not in mines and (c, r) != safe)
+    env.act(Action(type="click", x=_center(other)[0], y=_center(other)[1]))
+    assert env._app.game.result == "LOSE"  # 未被后续点击重开
 
 
 def test_full_loop_with_id_clicks(mines):

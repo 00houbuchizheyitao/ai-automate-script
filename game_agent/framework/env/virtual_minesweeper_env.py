@@ -17,8 +17,8 @@ import os
 import sys
 from pathlib import Path
 
-from src.framework.env.minesweeper_env import BOARD, MinesweeperEnv
-from src.framework.types import Action, FrameAnalysis, Status, Task
+from game_agent.framework.env.minesweeper_env import BOARD, MinesweeperEnv
+from game_agent.framework.types import Action, FrameAnalysis, Status, Task
 
 _ROOT = Path(__file__).resolve().parents[3]
 
@@ -44,7 +44,7 @@ class VirtualMinesweeperEnv(MinesweeperEnv):
         self.board_origin = (0, 0)   # 无头画面 = 纯棋盘，无外框偏移
         self._title_bar_h = 0        # 无标题栏 → 已翻格计数不做标题栏过滤
         self._flagged: set[str] = set()
-        from src.framework.perception import Perception
+        from game_agent.framework.perception import Perception
         self._perception = Perception(use_ocr=use_ocr)
         self._app = MinesweeperApp(seed=seed, headless=True)
 
@@ -77,6 +77,11 @@ class VirtualMinesweeperEnv(MinesweeperEnv):
     def act(self, action: Action) -> None:
         """把逻辑动作注入游戏事件循环（与真实鼠标事件走同一处理路径）。"""
         import pygame as pg
+
+        if self._app.game.result:
+            # 一局已结束：不再注入动作。MinesweeperApp 把结算后的左键点击
+            # 解释为“点击重开”，多格动作里踩雷后的后续点击会意外开启新局。
+            return
 
         if action.type == "flag":
             for tid in action.ids or ([action.id] if action.id else []):

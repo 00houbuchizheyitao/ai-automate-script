@@ -8,7 +8,7 @@ load_dotenv()
 
 class AppSettings:
     APP_NAME = "AI Automate Script"
-    APP_VERSION = "0.1.0"
+    APP_VERSION = "1.0.0"
     APP_TITLE = "AI 自动化脚本助手"
 
     BASE_DIR = Path(__file__).resolve().parent.parent.parent
@@ -16,9 +16,20 @@ class AppSettings:
 
     SCRIPTS_OUTPUT_DIR = Path(os.getenv("SCRIPTS_OUTPUT_DIR", str(BASE_DIR / "output")))
 
+    # LLM 后端选择：ollama | online（online = 任意 OpenAI 兼容 /chat/completions 端点）
+    LLM_PROVIDER = os.getenv("LLM_PROVIDER", "ollama")
+
     OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
-    OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen2.5vl:7b")
-    OLLAMA_TIMEOUT = int(os.getenv("OLLAMA_TIMEOUT", "120"))
+    OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "mimo-v2.6:9b")
+    # 上下文与采样：num_ctx 决定 KV cache 大小；thinking 默认开启，单步决策建议关闭
+    OLLAMA_NUM_CTX = int(os.getenv("OLLAMA_NUM_CTX", "16384"))
+    OLLAMA_TEMPERATURE = float(os.getenv("OLLAMA_TEMPERATURE", "0.2"))
+    OLLAMA_TOP_P = float(os.getenv("OLLAMA_TOP_P", "0.9"))
+    OLLAMA_NUM_PREDICT = int(os.getenv("OLLAMA_NUM_PREDICT", "4096"))
+    # default = 不传 think 字段；true/false = 显式开关 thinking
+    # 单步决策默认关闭：thinking 会吃掉 num_predict，思考未结束就没有正文
+    OLLAMA_THINK = os.getenv("OLLAMA_THINK", "false")
+    OLLAMA_TIMEOUT = int(os.getenv("OLLAMA_TIMEOUT", "300"))
 
     # 在线多模态模型（OpenAI 兼容端点，GLM 开放平台等）
     ONLINE_BASE_URL = os.getenv("ONLINE_BASE_URL", "https://open.bigmodel.cn/api/paas/v4")

@@ -2,7 +2,7 @@
 ; 用于创建专业的 Windows 安装程序
 
 #define AppName "AI Automate Script"
-#define AppVersion "0.1.0"
+#define AppVersion "1.0.0"
 #define AppPublisher "AI Automate"
 #define AppExeName "ai_automate_script.exe"
 

@@ -5,7 +5,7 @@ v1 扩展点：模板匹配 UI 元素、血条比例检测等。
 """
 from __future__ import annotations
 
-from src.framework.types import Element, FrameAnalysis
+from game_agent.framework.types import Element, FrameAnalysis
 
 
 class Perception:
@@ -19,11 +19,11 @@ class Perception:
             # 优先 RapidOCR（模型随 pip 包分发，无网络依赖）；
             # 未安装则回退 easyocr（首次初始化需从 GitHub 下载模型）。
             try:
-                from src.vision.rapid_ocr import RapidOCRProcessor
+                from game_agent.vision.rapid_ocr import RapidOCRProcessor
 
                 self._ocr = RapidOCRProcessor()
             except ImportError:
-                from src.vision.ocr import OCRProcessor
+                from game_agent.vision.ocr import OCRProcessor
 
                 self._ocr = OCRProcessor(languages=self._ocr_languages)
         return self._ocr

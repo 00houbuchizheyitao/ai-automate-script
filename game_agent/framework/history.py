@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from src.framework.types import Action, Status
+from game_agent.framework.types import Action, Status
 
 
 @dataclass

@@ -2,7 +2,7 @@
 
 > 让视觉语言模型只靠「看画面 + 发动作」玩通桌面游戏的最小闭环框架。
 
-**状态**：真实窗口闭环已打通（扫雷）、无头环境可复现跑分、双动作协议可 A/B 对比。v1.0 发布前待补量化基线。
+**状态**：v1.0。真实窗口闭环已打通（扫雷）、无头环境可复现跑分、双动作协议 A/B 对比；真实闭环基线 20 局 × 双协议见[评测](#评测)。
 
 ---
 
@@ -107,7 +107,7 @@ FC 模式下客户端把返回的 `tool_calls` **序列化回动作 JSON 文本*
 ## 目录结构
 
 ```
-src/
+game_agent/
 ├── framework/
 │   ├── runner.py                     # 循环编排、重试、僵滞检测
 │   ├── context.py                    # prompt 组装（SoM 极简 / 完整两套模板）
@@ -125,6 +125,8 @@ src/
 │       ├── virtual_minesweeper_env.py# 无头扫雷（SDL dummy）
 │       └── mock_env.py               # 合成靶子环境
 ├── llm/
+│   ├── base.py                       # 抽象基类 + capabilities 声明
+│   ├── factory.py                    # provider → 客户端
 │   ├── online_client.py              # 在线端点：流式、FC、图片重编码
 │   └── ollama_client.py              # 本地端点
 ├── vision/                           # 截屏 / OCR / 图像处理
@@ -146,10 +148,30 @@ tests/                                # 9 个测试文件
 
 ### 1. 安装
 
+作为应用/开发环境（全量依赖）：
+
 ```bash
 python -m venv .venv
 .venv\Scripts\activate
 pip install -r requirements.txt
+```
+
+作为库使用（按需安装 extras）：
+
+```bash
+pip install -e .                 # 核心：httpx + Pillow + dotenv
+pip install -e ".[benchmark]"    # 无头扫雷跑分
+pip install -e ".[window,vision]" # 真实窗口截屏 + OCR
+pip install -e ".[all]"          # 全量
+```
+
+```python
+from game_agent.config.settings import AppSettings
+from game_agent.framework import AgentRunner, MockEnv, make_llm_decider
+from game_agent.llm import create_llm_client
+
+client = create_llm_client(AppSettings(), provider="ollama", model="mimo-v2.6:9b")
+runner = AgentRunner(env=MockEnv(seed=1), decider=make_llm_decider(client))
 ```
 
 ### 2. 配置
@@ -158,14 +180,20 @@ pip install -r requirements.txt
 
 | 变量 | 默认值 | 说明 |
 |---|---|---|
+| `LLM_PROVIDER` | `ollama` | 后端选择：`ollama` / `online` |
 | `ONLINE_BASE_URL` | `https://open.bigmodel.cn/api/paas/v4` | OpenAI 兼容端点 |
 | `ONLINE_API_KEY` | （空） | 在线模型密钥，必填才能用 `--llm online` |
 | `ONLINE_MODEL` | `glm-5.3-flash` | 在线模型名 |
 | `ONLINE_TIMEOUT` | `60` | 流式读超时（两次字节最大间隔，秒） |
-| `ONLINE_THINKING` | `off` | `off` / `on` / `low` / `high` / `max` |
+| `ONLINE_THINKING` | `off` | `off` / `on` / `low` / `high` / `max` / `default`（不传字段） |
 | `ONLINE_MAX_TOKENS` | `0` | 0 = 不传该字段，由服务端兜底 |
 | `OLLAMA_BASE_URL` | `http://localhost:11434` | 本地端点 |
-| `OLLAMA_MODEL` | `qwen2.5vl:7b` | 本地多模态模型 |
+| `OLLAMA_MODEL` | `mimo-v2.6:9b` | 本地多模态模型（Q4_K_M，约 6.6GB，支持 vision/tools/thinking） |
+| `OLLAMA_NUM_CTX` | `16384` | 上下文长度；需覆盖 prompt + 思考 + 动作 |
+| `OLLAMA_TEMPERATURE` | `0.2` | 采样温度；越低越稳定 |
+| `OLLAMA_TOP_P` | `0.9` | nucleus sampling |
+| `OLLAMA_NUM_PREDICT` | `4096` | 单次输出 token 上限；thinking 关闭时 2048~4096 足够 |
+| `OLLAMA_THINK` | `false` | `default` = 不传；`true/false` = 显式开关 thinking；单步决策建议关闭 |
 | `OCR_LANGUAGES` | `ch_sim,en` | OCR 语言 |
 
 ### 3. 跑起来
@@ -208,15 +236,43 @@ python scripts/run_minesweeper.py --env virtual --llm online --fc      # functio
 **本地模型**：
 
 ```bash
-ollama pull qwen2.5vl:7b
-python scripts/run_minesweeper.py --env virtual --llm ollama
+ollama list   # 确认本地已有 mimo-v2.6:9b（按你的部署方式加载）
+python scripts/run_minesweeper.py --env virtual --llm ollama --fc
 ```
+
+**完整局模式**（自动设置 `safe_opens=71`、最大步数 120；任务提示词与普通模式相同，结束条件为 WIN/LOSE）：
+
+```bash
+python scripts/run_minesweeper.py --env virtual --llm ollama --full-game --fc
+```
+
+**并行跑分**（每局独立 seed，报告写入 `llm_views/run_trace_multi/`）：
+
+```bash
+python scripts/run_minesweeper.py --env virtual --llm ollama --fc --full-game --runs 20 --parallel 8
+```
+
+> `--runs` 是总测试局数，`--parallel` 是并发上限；不写 `--runs` 时默认等于 `--parallel`（即 `--parallel 8` 就是跑 8 局）。每局使用递增 seed，报告写入 `llm_views/run_trace_multi/`；单局时保持原来的 `llm_views/run_trace/` 路径。窗口模式共享桌面和键鼠，不支持多局并行。
+
+> `mimo-v2.6:9b` 是 Q4_K_M 精度（约 6.6GB），具备 `vision` / `tools` / `thinking`，原生上下文 262144。它的 thinking 默认开启，单步决策必须用 `OLLAMA_THINK=false` 关闭，否则思考会吃掉 `num_predict` 导致正文为空；实测 prompt 约 800 tokens，`num_ctx=16384` 足够。
 
 ### 4. 测试
 
 ```bash
 pytest -q
 ```
+
+---
+
+## 模型要求
+
+本框架是视觉闭环，模型能力由调用方保证；客户端只校验传输层能力，不探测具体模型。
+
+- **视觉（必需）**：模型必须支持图像输入。Runner 每一步都会发送原图 + SoM 标注图。
+- **Function calling（可选）**：仅在 `--fc` 模式下要求；默认 `prompt-json` 模式不要求。
+- **Ollama**：`--fc` 会发送 tools；需要 Ollama 版本与模型都支持 tools（`ollama show <模型>` 可查看 capabilities）。
+- **纯文本模型**（如 `deepseek-chat`）无法运行本框架；请改用带视觉能力的模型。
+- 在线端点返回 400/422 且响应提到 image / vision / tools 时，客户端会给出能力不匹配提示，但不会替用户自动切换模型。
 
 ---
 
@@ -240,7 +296,7 @@ Get-Content llm_views\run_trace\run_trace.md -Wait -Tail 30
 4. 实现 `check(task)`：判定 SUCCESS / FAIL / RUNNING
 5. 实现 `reset()`：跑分场景必需
 
-参考 `src/framework/env/minesweeper_env.py`——它只重写了 `check` / `reset` / `capture` 的增强部分，其余全部继承通用层。
+参考 `game_agent/framework/env/minesweeper_env.py`——它只重写了 `check` / `reset` / `capture` 的增强部分，其余全部继承通用层。
 
 ---
 
@@ -252,7 +308,9 @@ python scripts/run_mock_llm.py --runs 10 --save
 
 固定种子锁定考题（第 i 次运行的靶位永远一致），统计命中率 / 平均步数 / 解析错误率 / 平均耗时，结果写入 `benchmark_results/`。
 
-### 已有基线：MockEnv × qwen2.5vl:7b
+### 历史基线：MockEnv × qwen2.5vl:7b
+
+> 历史基线：这些数字来自旧默认模型 `qwen2.5vl:7b`；当前默认已改为 `mimo-v2.6:9b`，旧数字仅作记录，不与新模型直接对比。
 
 `benchmark_results/baseline_qwen2.5vl_7b_20260927_232910.md`，10 次运行，最大 15 步：
 
@@ -267,14 +325,32 @@ python scripts/run_mock_llm.py --runs 10 --save
 
 > 该基线只覆盖最简单的合成环境（点击白色方块），用于验证管道可靠性，不代表真实游戏难度。
 
-### 待补：真实闭环基线
+### 真实闭环基线：VirtualMinesweeperEnv × glm-5.3-flash
 
-<!-- TODO(v1.0): 真实闭环基线待补
-     - 环境：VirtualMinesweeperEnv，seed 42..61（20 局）
-     - 协议：prompt-json vs function calling
-     - 指标：成功率、平均步数、P95 步数、解析错误率、平均耗时、平均调用次数
-     - 记录：模型名 + 日期 + 温度
--->
+- 日期：2026-11-16
+- 环境：`VirtualMinesweeperEnv`，seeds 42..61（20 局）
+- 任务：安全翻开 3 格，最大 10 步
+- 并发：`--runs 20 --parallel 8`
+- 配置：`glm-5.3-flash`，`ONLINE_THINKING=max`，`ONLINE_MAX_TOKENS=0`（温度由服务端决定）
+
+| 协议 | 成功率 | 平均步数 | P95 步数 | 解析错误率 | 平均耗时 | 平均调用次数 |
+|---|---|---|---|---|---|---|
+| function calling（`--fc`） | 16/20 = 80.0% | 2.2 | 4 | 0/20 = 0.0% | 213.4s | 2.25 |
+| prompt JSON | 17/20 = 85.0% | 2.2 | 4 | 0/20 = 0.0% | 306.7s | 2.25 |
+
+> 解析错误率为运行级：重试后恢复的解析失败不计入，但 function calling 基线实际出现过 1 次解析失败尝试。平均耗时是并发下的单局墙钟时间；在线客户端暂未采集 token usage，token 列为 0。
+
+原始汇总：
+
+- `benchmark_results/baseline_glm-5.3-flash_fc_20261116_002418.md`
+- `benchmark_results/baseline_glm-5.3-flash_prompt-json_20261116_005256.md`
+
+复现命令：
+
+```bash
+python scripts/run_minesweeper.py --env virtual --llm online --fc --runs 20 --parallel 8 --seed 42 --safe-opens 3 --steps 10 --save
+python scripts/run_minesweeper.py --env virtual --llm online --runs 20 --parallel 8 --seed 42 --safe-opens 3 --steps 10 --save
+```
 
 ---
 
@@ -295,12 +371,12 @@ python scripts/run_mock_llm.py --runs 10 --save
 - `check()` 依赖画面判定，OCR 对手写体/低对比度文字不可靠
 - 历史窗口是固定长度切片，没有做摘要压缩
 - 无头环境仅扫雷一套；跨环境泛化尚未量化
-- Function Calling 仅接入了在线端点（Ollama 工具调用格式不同，未接入）
-- 当前为单机单进程，未做并行跑分调度
+- Function Calling 已接入 online 与 Ollama；Ollama 需要模型与版本支持 tools（arguments 的对象/字符串形态均已兼容）
+- 并行跑分仅支持无头环境（`--env virtual`）；窗口模式共享同一套桌面键鼠，不能并行
+- 在线客户端的 token 用量暂未采集，并行汇总中的 token 列为 0
 
 ## Roadmap
 
-- 真实闭环量化基线（20 局 × 双协议）
 - 失败模式分类统计（踩雷 / 步数耗尽 / 解析失败 / 非法编号 / 僵滞）
 - 机器可读 trace（JSONL）+ 聚合脚本
 - 成本与延迟计量（token / 调用次数 / 单步耗时分布）

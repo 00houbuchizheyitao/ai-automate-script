@@ -8,7 +8,7 @@ import io
 
 from PIL import Image
 
-from src.framework.env.minesweeper_env import MinesweeperEnv
+from game_agent.framework.env.minesweeper_env import MinesweeperEnv
 
 # 全深灰棋盘（全部未翻开）——纯棋盘图，无窗口外框，origin 必须传 (0,0)
 img = Image.new("RGB", (360, 360), (100, 100, 100))

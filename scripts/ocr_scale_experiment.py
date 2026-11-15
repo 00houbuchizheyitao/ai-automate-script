@@ -8,7 +8,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
-from src.vision.rapid_ocr import RapidOCRProcessor
+from game_agent.vision.rapid_ocr import RapidOCRProcessor
 
 
 def board_with_row(digits: str) -> bytes:

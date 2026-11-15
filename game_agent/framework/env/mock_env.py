@@ -10,11 +10,10 @@ from __future__ import annotations
 import io
 import random
 
-import mss.tools
 from PIL import Image, ImageDraw
 
-from src.framework.env.base import Environment
-from src.framework.types import Action, FrameAnalysis, Status, Task
+from game_agent.framework.env.base import Environment
+from game_agent.framework.types import Action, FrameAnalysis, Status, Task
 
 WIDTH, HEIGHT = 800, 600
 TARGET_SIZE = 48          # 靶子边长

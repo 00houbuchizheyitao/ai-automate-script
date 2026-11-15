@@ -1,7 +1,7 @@
 """RunTraceLogger 测试：markdown 追加、图片落盘、重试同步分组、结论记录"""
 import asyncio
 
-from src.framework import MockEnv, RunTraceLogger, Task
+from game_agent.framework import MockEnv, RunTraceLogger, Task
 
 
 def _read(tmp_path):
@@ -86,7 +86,7 @@ def test_trace_conclusions_omitted_when_empty(tmp_path):
 
 def test_runner_integrates_tracer(tmp_path):
     """Runner 注入 tracer 后，每步信息实时追加到 md"""
-    from src.framework import AgentRunner
+    from game_agent.framework import AgentRunner
 
     env = MockEnv(seed=1)
     env.set_target(500, 200)
@@ -112,7 +112,7 @@ def test_runner_integrates_tracer(tmp_path):
 
 def test_trace_finish_summary(tmp_path):
     """运行结束追加'测试结束'节：结束原因/总步数/动作序列/结论数"""
-    from src.framework import Action
+    from game_agent.framework import Action
 
     tracer = RunTraceLogger(log_path=tmp_path / "run_trace.md")
     tracer.log_finish(
@@ -131,7 +131,7 @@ def test_trace_finish_summary(tmp_path):
 
 def test_runner_writes_finish_summary(tmp_path):
     """Runner 判定结束后，md 末尾有结束原因节（区分判负与崩溃）"""
-    from src.framework import AgentRunner
+    from game_agent.framework import AgentRunner
 
     env = MockEnv(seed=1)
     env.set_target(500, 200)
@@ -154,7 +154,7 @@ def test_runner_traces_abort_on_parse_exhaustion(tmp_path):
     """解析重试耗尽抛异常 → md 末尾记'异常中断'（区分崩溃与判负）"""
     import pytest
 
-    from src.framework import ActionParseError, AgentRunner
+    from game_agent.framework import ActionParseError, AgentRunner
 
     env = MockEnv(seed=1)
 

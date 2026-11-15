@@ -15,10 +15,9 @@ from __future__ import annotations
 
 import time
 
-from src.framework.env.base import Environment
-from src.framework.perception import Perception
-from src.framework.types import Action, FrameAnalysis
-from src.vision.screen_capture import ScreenCapture
+from game_agent.framework.env.base import Environment
+from game_agent.framework.perception import Perception
+from game_agent.framework.types import Action, FrameAnalysis
 
 Region = tuple[int, int, int, int]  # (left, top, width, height)
 
@@ -64,7 +63,7 @@ class WindowEnv(Environment):
         self._region = region
         self.window_title = window_title
         self._perception = Perception(use_ocr=use_ocr, ocr_languages=ocr_languages)
-        self._screen = ScreenCapture()
+        self.__screen = None  # 惰性创建：无头/纯合成场景不加载 mss
         self.act_interval_s = act_interval_s
         self.dry_run = dry_run
         self.content_threshold = content_threshold
@@ -74,10 +73,18 @@ class WindowEnv(Environment):
         self._cached_hwnd = None  # 内容校验通过的窗口句柄缓存
         self.last_act: tuple[Action, tuple[int, int] | None] | None = None
 
+    @property
+    def _screen(self):
+        if self.__screen is None:
+            from game_agent.vision.screen_capture import ScreenCapture
+            self.__screen = ScreenCapture()
+        return self.__screen
+
     # ---------- 区域解析 ----------
 
     @staticmethod
     def _primary_monitor_region() -> Region:
+        from game_agent.vision.screen_capture import ScreenCapture
         cap = ScreenCapture()
         try:
             monitors = cap.get_monitor_info()

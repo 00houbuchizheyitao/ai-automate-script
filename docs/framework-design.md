@@ -1,6 +1,6 @@
 # 框架设计：以高质量信息供给为目标的抽象
 
-> 状态：v1.0 最小闭环已实现并通过基线测试（见文末）。
+> 状态：v1.0 已实现；真实闭环基线（20 局 × 双协议）见 README 的「评测」章节。
 > 本文回答一个核心问题：**Agent 框架要如何设计，才能给 LLM 尽可能高质量的信息？**
 
 ## 1. 核心心智模型
@@ -168,9 +168,9 @@ LLM 可插拔的关键是一个极窄的 Decider 接口：`async decide(prompt, 
 
 ## 7. v1.0 实现状态
 
-已实现（`src/framework/`）：types / env/base / env/mock_env / env/window_env / perception / context / history / runner / llm_adapter，框架冒烟测试 9/9 通过（另：旧 `test_agent.py`、`test_llm.py` 属遗留对话应用的失效测试，随旧世界清理一并删除）。
+已实现（`game_agent/framework/`）：types / env/base / env/mock_env / env/window_env / perception / context / history / runner / llm_adapter；当前完整测试 83 项全部通过（另：旧 `test_agent.py`、`test_llm.py` 属遗留对话应用的失效测试，随旧世界清理一并删除）。
 
-**基线数据**（qwen2.5vl:7b，MockEnv 点方块任务，n=10，2026-09-19）：
+**历史基线**（qwen2.5vl:7b，MockEnv 点方块任务，n=10，2026-09-19）：
 
 ```
 命中率 70.0%（7/10，全部为第 1 步命中）

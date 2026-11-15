@@ -39,10 +39,14 @@ class RunTraceLogger:
     def log_step(self, step: int, prompt: str, images: list[bytes],
                  raw_output: str, parsed: list[str] | None,
                  status: str, conclusions: list[str],
-                 elapsed_s: float | None = None) -> list[str]:
+                 elapsed_s: float | None = None,
+                 usage: dict | None = None,
+                 thinking: str = "") -> list[str]:
         """记录一次 LLM 调用。返回本次落盘的图片相对路径列表。
 
         elapsed_s = 本次尝试的 LLM 调用耗时（秒）；None 时不输出耗时行。
+        usage = 模型返回的 token/耗时明细；None 时不输出用量行。
+        thinking = thinking 模型的思考过程；空串时不输出该段。
         """
         attempt = self._attempts.get(step, 0) + 1
         self._attempts[step] = attempt
@@ -60,6 +64,8 @@ class RunTraceLogger:
         for p, label in zip(img_rel_paths, labels):
             lines.append(f"### {label}\n\n![{label}]({p})\n")
         lines.append("### 发给 LLM 的信息\n\n```text\n" + prompt + "\n```\n")
+        if thinking:
+            lines.append("### 模型思考过程\n\n```text\n" + thinking + "\n```\n")
         lines.append("### LLM 返回的信息\n\n```text\n" + raw_output + "\n```\n")
 
         parsed_str = "、".join(parsed) if parsed else "（解析失败，见上方返回信息）"
@@ -67,6 +73,19 @@ class RunTraceLogger:
         lines.append(f"**执行后状态**：{status}\n")
         if elapsed_s is not None:
             lines.append(f"**本步耗时**：{elapsed_s:.1f} 秒\n")
+        if usage:
+            seq = int(usage.get("prompt_tokens") or 0) + int(
+                usage.get("completion_tokens") or 0)
+            lines.append(
+                f"**Token 用量**：prompt={usage.get('prompt_tokens', 0)}"
+                f"，completion={usage.get('completion_tokens', 0)}"
+                f"，序列={seq}\n")
+            if usage.get("done_reason"):
+                lines.append(f"**生成结束原因**：`{usage['done_reason']}`\n")
+            lines.append(
+                f"**模型耗时**：prompt_eval="
+                f"{float(usage.get('prompt_eval_ms') or 0):.0f} ms"
+                f"，eval={float(usage.get('eval_ms') or 0):.0f} ms\n")
         if conclusions:
             numbered = "\n".join(f"- {c}" for c in conclusions)
             lines.append(f"**推理结论（已存入结论记忆）**：\n{numbered}\n")
@@ -76,7 +95,8 @@ class RunTraceLogger:
         return img_rel_paths
 
     def log_finish(self, reason: str, steps: int, max_steps: int,
-                   actions: list, conclusions: list[str]) -> None:
+                   actions: list, conclusions: list[str],
+                   usage: dict | None = None) -> None:
         """运行结束时在 md 末尾追加"测试结束"节。
 
         reason 由 Runner 组装：任务判定结束（success/fail）、步数耗尽、
@@ -91,5 +111,21 @@ class RunTraceLogger:
             f"**动作序列**：{seq}",
             f"**推理结论**：{len(conclusions)} 条存入结论记忆\n",
         ]
+        if usage:
+            lines.append(
+                f"**Token 合计**：prompt={usage.get('prompt_tokens', 0)}"
+                f"，completion={usage.get('completion_tokens', 0)}"
+                f"，调用={usage.get('calls', 0)} 次\n")
+            lines.append(
+                f"**上下文峰值**：{usage.get('max_seq', 0)} tokens"
+                f"（prompt max={usage.get('max_prompt_tokens', 0)}"
+                f"，completion max={usage.get('max_completion_tokens', 0)}）\n")
+            lines.append(
+                f"**截断次数**：{usage.get('length_stops', 0)} 次 "
+                f"done_reason=length\n")
+            lines.append(
+                f"**模型耗时合计**：prompt_eval="
+                f"{float(usage.get('prompt_eval_ms') or 0) / 1000:.2f} s"
+                f"，eval={float(usage.get('eval_ms') or 0) / 1000:.2f} s\n")
         with open(self.log_path, "a", encoding="utf-8") as f:
             f.write("\n".join(lines))

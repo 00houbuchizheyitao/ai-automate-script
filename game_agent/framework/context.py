@@ -7,8 +7,8 @@
 """
 from __future__ import annotations
 
-from src.framework.types import ACTION_SCHEMA_HINT, FrameAnalysis, Task
-from src.framework.history import HistoryView
+from game_agent.framework.types import ACTION_SCHEMA_HINT, FrameAnalysis, Task
+from game_agent.framework.history import HistoryView
 
 
 class ContextAssembler:
