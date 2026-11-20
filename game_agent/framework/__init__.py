@@ -1,4 +1,4 @@
-"""游戏环境自主 Agent 研究框架（v1.0 最小闭环）。
+"""Agent 循环与运行时：扫雷 benchmark 的执行核心（v1.0）。
 
 公共出口：
     from game_agent.framework import MockEnv, AgentRunner, make_llm_decider, Task

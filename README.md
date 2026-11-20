@@ -1,20 +1,27 @@
-# Game Agent Framework
+# 可自定义测试条件的扫雷 Agent benchmark
 
-> 让视觉语言模型只靠「看画面 + 发动作」玩通桌面游戏的最小闭环框架。
+> 让视觉语言模型只靠「看画面 + 发动作」完成扫雷；固定种子、可批量、可追踪，用同一套流程对比不同模型与 harness 的推理 / 空间能力。
 
 **状态**：v1.0。真实窗口闭环已打通（扫雷）、无头环境可复现跑分、双动作协议 A/B 对比；真实闭环基线 20 局 × 双协议见[评测](#评测)。
 
+**库 API 文档**：[docs/api.md](docs/api.md)（公共出口、构造参数、自定义 Environment/Decider、extras 矩阵）。
+
 ---
 
-## 这个项目要解决什么
+## 这个项目是什么
 
-让 LLM 直接操作 GUI 有三个绕不开的障碍：
+一个**可自定义测试条件的扫雷 Agent benchmark**。它让视觉语言模型（或你替换的 harness）只靠「看画面 + 发动作」完成扫雷（即只依靠模型自身能力），用统一、可复现的流程量化其**推理能力**和**空间能力**。
 
-1. **坐标不可靠** — 让模型直接输出像素坐标，误差随分辨率放大，且无法察觉自己点错
-2. **输出不合规** — 模型会写错 JSON、漏字段、把推理正文和动作混在一起
-3. **没法判定"它到底行不行"** — 单次演示成功不等于有效，必须有可复现的量化基线
+评测对象既可以是模型本身，也可以是模型之外的 harness（prompt 组装、动作协议、解析与重试策略）；换掉其中任意一层，其余条件保持不变即可对比。
 
-本框架用三条设计分别应对：**SoM 编号感知**、**符号解析 + 反馈重试**、**无头环境 + 固定种子跑分**。
+**能做什么**
+
+- **自定义测试条件**：模型、动作协议（prompt JSON / function calling）、环境（无头 / 真实窗口）、种子、任务难度（安全翻开 N 格 / 完整局）都可切换。
+- **可复现**：固定种子锁定每一局棋盘，同一配置重复运行会得到同一考题。
+- **可批量**：无头环境支持多局并行，每局独立 seed、独立客户端、独立 trace。
+- **无打扰**：无头模式在进程内渲染，不占桌面、不动鼠标键盘，可以边跑边用电脑。
+- **可追踪**：每一步的 prompt、模型原始输出、解析结果、截图和耗时全部落盘，能区分「模型推理错」「感知错」「解析错」。
+- **可评估**：多局运行自动生成汇总报告（单局报告写入 trace），包含成功率、平均步数、P95 步数、解析错误率、调用次数、token 用量、耗时等量化指标，用于对比不同模型与 harness 的**成本 / 时间 / 性能**。
 
 ---
 
@@ -132,6 +139,10 @@ game_agent/
 ├── vision/                           # 截屏 / OCR / 图像处理
 └── config/settings.py                # .env 配置
 
+docs/
+├── framework-design.md                # 设计思路与边界
+└── api.md                             # 库 API：公共出口/构造参数/契约/模板
+
 scripts/
 ├── run_minesweeper.py                # 主入口：真实闭环 / 无头 / 人审 / dry-run
 ├── run_mock_llm.py                   # 基准跑分（N 次，输出统计与 markdown）
@@ -159,20 +170,41 @@ pip install -r requirements.txt
 作为库使用（按需安装 extras）：
 
 ```bash
-pip install -e .                 # 核心：httpx + Pillow + dotenv
-pip install -e ".[benchmark]"    # 无头扫雷跑分
+pip install -e .                  # 核心：httpx + Pillow + dotenv
+pip install -e ".[benchmark]"     # 无头扫雷跑分
 pip install -e ".[window,vision]" # 真实窗口截屏 + OCR
-pip install -e ".[all]"          # 全量
+pip install -e ".[all]"           # 全量
 ```
+
+> 安装名是 `ai-automate-script`，导入名是 `game_agent`。完整公共出口、构造参数、Environment/Decider 契约与自定义模板见 **[docs/api.md](docs/api.md)**。
+
+最小闭环（真实 LLM）：
 
 ```python
+import asyncio
+
 from game_agent.config.settings import AppSettings
-from game_agent.framework import AgentRunner, MockEnv, make_llm_decider
+from game_agent.framework import AgentRunner, MockEnv, Task, make_llm_decider
 from game_agent.llm import create_llm_client
 
-client = create_llm_client(AppSettings(), provider="ollama", model="mimo-v2.6:9b")
-runner = AgentRunner(env=MockEnv(seed=1), decider=make_llm_decider(client))
+
+async def main() -> None:
+    client = create_llm_client(
+        AppSettings(), provider="ollama", model="mimo-v2.6:9b"
+    )
+    runner = AgentRunner(
+        env=MockEnv(seed=1),
+        decider=make_llm_decider(client),
+    )
+    result = await runner.run(Task(goal="点击画面中的白色方块", timeout_steps=10))
+    print(result.status.value, result.steps, result.actions)
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
 ```
+
+不调用模型、只验证管道是否通，可用 [docs/api.md](docs/api.md) 里的“最小可运行示例”。
 
 ### 2. 配置
 
@@ -298,6 +330,8 @@ Get-Content llm_views\run_trace\run_trace.md -Wait -Tail 30
 
 参考 `game_agent/framework/env/minesweeper_env.py`——它只重写了 `check` / `reset` / `capture` 的增强部分，其余全部继承通用层。
 
+完整的公共出口、构造参数、Environment/Decider 契约与自定义模板见 [docs/api.md](docs/api.md)。
+
 ---
 
 ## 评测
@@ -377,10 +411,12 @@ python scripts/run_minesweeper.py --env virtual --llm online --runs 20 --paralle
 
 ## Roadmap
 
+- **[最高优先级]** 不同模型并行跑测试：同一批 seed 下并行运行多个模型，产出可直接对比的成本 / 时间 / 性能汇总（当前需多进程分别运行再手工合并）。
 - 失败模式分类统计（踩雷 / 步数耗尽 / 解析失败 / 非法编号 / 僵滞）
 - 机器可读 trace（JSONL）+ 聚合脚本
 - 成本与延迟计量（token / 调用次数 / 单步耗时分布）
 - 第二个环境接入，验证框架泛化
+- **[最低优先级 · 远期 · 可能不做]** 带 UI 的客户端版本：可视化配置测试条件、启动与监控运行、浏览汇总报告。
 
 ## License
 

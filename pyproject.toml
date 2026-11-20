@@ -1,10 +1,10 @@
 [project]
 name = "ai-automate-script"
 version = "1.0.0"
-description = "游戏环境自主 Agent 研究框架：Environment 三方法抽象（capture/act/check）+ SoM 编号感知 + LLM 单步决策闭环"
+description = "可自定义测试条件的扫雷 Agent benchmark：固定种子可复现、无头可批量、全链路可追踪，量化模型与 harness 的推理与空间能力"
 readme = "README.md"
 requires-python = ">=3.10"
-license = {text = "MIT"}
+license = "MIT"
 authors = [
     {name = "AI Automate Team"}
 ]

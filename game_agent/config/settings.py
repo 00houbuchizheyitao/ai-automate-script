@@ -11,10 +11,17 @@ class AppSettings:
     APP_VERSION = "1.0.0"
     APP_TITLE = "AI 自动化脚本助手"
 
+    # 源码根目录（editable 安装指向仓库；wheel 安装指向 site-packages）。
+    # 仅保留给需要仓库级资源的脚本；输出目录不再基于它。
     BASE_DIR = Path(__file__).resolve().parent.parent.parent
     ASSETS_DIR = BASE_DIR / "assets"
 
-    SCRIPTS_OUTPUT_DIR = Path(os.getenv("SCRIPTS_OUTPUT_DIR", str(BASE_DIR / "output")))
+    # 输出目录：默认模块导入时的工作目录下的 output/，避免安装到
+    # site-packages 后把输出写进包目录。目录不在这里自动创建，
+    # 使用前由调用方按需 mkdir。
+    SCRIPTS_OUTPUT_DIR = Path(
+        os.getenv("SCRIPTS_OUTPUT_DIR", str(Path.cwd() / "output"))
+    ).expanduser()
 
     # LLM 后端选择：ollama | online（online = 任意 OpenAI 兼容 /chat/completions 端点）
     LLM_PROVIDER = os.getenv("LLM_PROVIDER", "ollama")
@@ -45,9 +52,6 @@ class AppSettings:
     SCRIPT_PAUSE_INTERVAL = float(os.getenv("SCRIPT_PAUSE_INTERVAL", "0.5"))
 
     LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
-
-    def __init__(self):
-        self.SCRIPTS_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
     @property
     def scripts_output_dir(self) -> Path:
